@@ -488,3 +488,4 @@ data/
 *.db-wal
 src/TorrentWatcher.Web/ClientApp/node_modules/
 src/TorrentWatcher.Web/ClientApp/dist/
+src/TorrentWatcher.Web/wwwroot/

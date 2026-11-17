@@ -1,6 +1,64 @@
-@TorrentWatcher.Web_HostAddress = http://localhost:5165
+@host = http://localhost:5080
+@torrentId = 1
 
-GET {{TorrentWatcher.Web_HostAddress}}/weatherforecast/
+### Список торрентов и сводка
+GET {{host}}/api/torrents
 Accept: application/json
 
-###
+### Добавить торрент по ссылке на топик
+POST {{host}}/api/torrents
+Content-Type: application/json
+
+{
+  "url": "https://rutracker.org/forum/viewtopic.php?t=123456"
+}
+
+### Поставить на паузу / вернуть в автоскан
+PUT {{host}}/api/torrents/{{torrentId}}/enabled
+Content-Type: application/json
+
+{
+  "isEnabled": false
+}
+
+### Проверить один торрент (синхронно)
+POST {{host}}/api/torrents/{{torrentId}}/check
+Accept: application/json
+
+### Проверить все включённые торренты (202 + runId)
+POST {{host}}/api/torrents/check-all
+Accept: application/json
+
+### Удалить торрент
+DELETE {{host}}/api/torrents/{{torrentId}}
+
+### Настройки
+GET {{host}}/api/settings
+Accept: application/json
+
+### Сохранить настройки (кука — только когда меняется)
+PUT {{host}}/api/settings
+Content-Type: application/json
+
+{
+  "rutrackerCookie": "bb_session=…; bb_data=…",
+  "scanIntervalMinutes": 60,
+  "autoScanEnabled": true,
+  "requestDelayMs": 1500,
+  "requestTimeoutSeconds": 30
+}
+
+### Проверить куку по первому отслеживаемому топику
+POST {{host}}/api/settings/test-cookie
+Accept: application/json
+
+### Статус системы
+GET {{host}}/api/system/status
+Accept: application/json
+
+### Healthcheck
+GET {{host}}/api/health
+
+### OpenAPI JSON
+GET {{host}}/openapi/v1.json
+Accept: application/json

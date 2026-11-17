@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.12" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TorrentWatcher.Application\TorrentWatcher.Application.csproj" />
+    <ProjectReference Include="..\TorrentWatcher.Infrastructure\TorrentWatcher.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/TorrentWatcher.Application/TorrentWatcher.Application.csproj" />
+    <Project Path="src/TorrentWatcher.Domain/TorrentWatcher.Domain.csproj" />
+    <Project Path="src/TorrentWatcher.Infrastructure/TorrentWatcher.Infrastructure.csproj" />
+    <Project Path="src/TorrentWatcher.Web/TorrentWatcher.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/TorrentWatcher.IntegrationTests/TorrentWatcher.IntegrationTests.csproj" />
+    <Project Path="tests/TorrentWatcher.UnitTests/TorrentWatcher.UnitTests.csproj" />
+  </Folder>
+</Solution>

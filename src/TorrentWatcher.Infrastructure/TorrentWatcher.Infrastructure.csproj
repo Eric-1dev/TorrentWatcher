@@ -1,0 +1,8 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\TorrentWatcher.Application\TorrentWatcher.Application.csproj" />
+    <ProjectReference Include="..\TorrentWatcher.Domain\TorrentWatcher.Domain.csproj" />
+  </ItemGroup>
+
+</Project>

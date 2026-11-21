@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using TorrentWatcher.Application.Abstractions;
 using TorrentWatcher.Application.Dtos;
 using TorrentWatcher.Application.Services;
 using TorrentWatcher.Application.State;
@@ -14,15 +15,18 @@ public sealed class TorrentsController : ControllerBase
     private readonly TorrentService _torrentService;
     private readonly TorrentScanService _scanService;
     private readonly ScanCoordinator _scanCoordinator;
+    private readonly ITorrentUpdateApplier _updateApplier;
 
     public TorrentsController(
         TorrentService torrentService,
         TorrentScanService scanService,
-        ScanCoordinator scanCoordinator)
+        ScanCoordinator scanCoordinator,
+        ITorrentUpdateApplier updateApplier)
     {
         _torrentService = torrentService;
         _scanService = scanService;
         _scanCoordinator = scanCoordinator;
+        _updateApplier = updateApplier;
     }
 
     [HttpGet]
@@ -57,6 +61,14 @@ public sealed class TorrentsController : ControllerBase
     [HttpPost("{id:int}/check")]
     public async Task<ActionResult<TorrentCheckResult>> Check(int id, CancellationToken cancellationToken) =>
         Ok(await _scanService.CheckAsync(id, cancellationToken));
+
+    /// <summary>
+    /// Ручное применение обновления в qBittorrent: старая раздача удаляется без файлов,
+    /// новая добавляется в ту же папку. Работает и при выключенном авто-применении.
+    /// </summary>
+    [HttpPost("{id:int}/apply")]
+    public async Task<ActionResult<TorrentApplyResult>> Apply(int id, CancellationToken cancellationToken) =>
+        Ok(await _updateApplier.ApplyByIdAsync(id, cancellationToken));
 
     /// <summary>Запускает проверку всех включённых торрентов в фоне. 202 + runId.</summary>
     [HttpPost("check-all")]

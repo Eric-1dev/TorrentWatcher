@@ -31,11 +31,14 @@ public sealed class TestWebApplicationFactory : WebApplicationFactory<Program>
 
     public string TorrentsDirectory => Path.Combine(_rootDirectory, "torrents");
 
+    public string KeysDirectory => Path.Combine(_rootDirectory, "keys");
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Testing");
         builder.UseSetting("ConnectionStrings:Default", $"Data Source={DatabasePath}");
         builder.UseSetting("Storage:TorrentsDirectory", TorrentsDirectory);
+        builder.UseSetting("Security:KeysDirectory", KeysDirectory);
 
         builder.ConfigureServices(services =>
         {

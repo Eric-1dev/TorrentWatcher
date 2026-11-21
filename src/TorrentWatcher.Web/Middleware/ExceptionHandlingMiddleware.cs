@@ -63,7 +63,7 @@ public sealed class ExceptionHandlingMiddleware
         var problem = new ProblemDetails
         {
             Status = status,
-            Title = TitleFor(status),
+            Title = TitleFor(code, status),
             Detail = detail,
             Instance = context.Request.Path,
             Type = $"https://torrentwatcher.local/problems/{code.ToLowerInvariant()}",
@@ -87,20 +87,35 @@ public sealed class ExceptionHandlingMiddleware
         ErrorCodes.InvalidUrl => StatusCodes.Status400BadRequest,
         ErrorCodes.SettingsInvalid => StatusCodes.Status400BadRequest,
         ErrorCodes.RutrackerCookieInvalid => StatusCodes.Status401Unauthorized,
+        ErrorCodes.RutrackerLoginFailed => StatusCodes.Status401Unauthorized,
+        ErrorCodes.RutrackerLoginCaptchaRequired => StatusCodes.Status409Conflict,
+        ErrorCodes.RutrackerCredentialsUnreadable => StatusCodes.Status409Conflict,
         ErrorCodes.TorrentNotFound => StatusCodes.Status404NotFound,
         ErrorCodes.TopicNotFound => StatusCodes.Status404NotFound,
         ErrorCodes.DuplicateTopic => StatusCodes.Status409Conflict,
         ErrorCodes.ScanAlreadyRunning => StatusCodes.Status409Conflict,
         ErrorCodes.RutrackerUnavailable => StatusCodes.Status502BadGateway,
         ErrorCodes.RutrackerInvalidPayload => StatusCodes.Status502BadGateway,
+        ErrorCodes.RutrackerChallengeRequired => StatusCodes.Status502BadGateway,
+        ErrorCodes.QbittorrentNotConfigured => StatusCodes.Status409Conflict,
+        ErrorCodes.QbittorrentAuthFailed => StatusCodes.Status409Conflict,
+        ErrorCodes.QbittorrentUnavailable => StatusCodes.Status502BadGateway,
         ErrorCodes.StorageFailure => StatusCodes.Status500InternalServerError,
         _ => StatusCodes.Status500InternalServerError,
+    };
+
+    private static string TitleFor(string code, int status) => code switch
+    {
+        ErrorCodes.QbittorrentNotConfigured => "qBittorrent не настроен",
+        ErrorCodes.QbittorrentAuthFailed => "qBittorrent не принял учётные данные",
+        ErrorCodes.QbittorrentUnavailable => "qBittorrent недоступен",
+        _ => TitleFor(status),
     };
 
     private static string TitleFor(int status) => status switch
     {
         StatusCodes.Status400BadRequest => "Некорректный запрос",
-        StatusCodes.Status401Unauthorized => "Кука рутрекера не принята",
+        StatusCodes.Status401Unauthorized => "Рутрекер не принял учётные данные",
         StatusCodes.Status404NotFound => "Не найдено",
         StatusCodes.Status409Conflict => "Конфликт",
         StatusCodes.Status502BadGateway => "Ошибка рутрекера",

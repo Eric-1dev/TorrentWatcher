@@ -19,6 +19,7 @@ public sealed class TorrentService
 {
     private readonly ITrackedTorrentRepository _torrentRepository;
     private readonly IRutrackerClient _rutrackerClient;
+    private readonly IRutrackerSessionProvider _session;
     private readonly ITorrentFileStorage _fileStorage;
     private readonly ISettingsProvider _settingsProvider;
     private readonly TimeProvider _timeProvider;
@@ -26,12 +27,14 @@ public sealed class TorrentService
     public TorrentService(
         ITrackedTorrentRepository torrentRepository,
         IRutrackerClient rutrackerClient,
+        IRutrackerSessionProvider session,
         ITorrentFileStorage fileStorage,
         ISettingsProvider settingsProvider,
         TimeProvider timeProvider)
     {
         _torrentRepository = torrentRepository;
         _rutrackerClient = rutrackerClient;
+        _session = session;
         _fileStorage = fileStorage;
         _settingsProvider = settingsProvider;
         _timeProvider = timeProvider;
@@ -45,8 +48,19 @@ public sealed class TorrentService
         return new TorrentListResult(
             items,
             TotalCount: items.Length,
-            UpdateAvailableCount: torrents.Count(torrent => torrent.LastCheckOutcome == TorrentCheckOutcome.Changed));
+            UpdateAvailableCount: torrents.Count(IsUpdatePending));
     }
+
+    /// <summary>
+    /// Обновление «ждёт применения»: infohash изменился, но в qBittorrent ещё не применён.
+    /// После успешной замены счётчик в шапке гаснет, хотя статус проверки остаётся Changed.
+    /// </summary>
+    private static bool IsUpdatePending(TrackedTorrent torrent) =>
+        torrent.LastCheckOutcome == TorrentCheckOutcome.Changed
+        && !string.Equals(
+            torrent.AppliedInfoHashV1,
+            torrent.InfoHashV1,
+            StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Добавляет торрент: разбирает ссылку, скачивает .torrent текущей кукой, сохраняет файл
@@ -67,15 +81,12 @@ public sealed class TorrentService
         }
 
         AppSettingsSnapshot settings = _settingsProvider.Current;
-        if (string.IsNullOrWhiteSpace(settings.RutrackerCookie))
-        {
-            throw new AppException(
-                ErrorCodes.RutrackerCookieInvalid,
-                "Кука рутрекера не задана. Сохраните её в настройках, иначе скачать .torrent нельзя.");
-        }
+
+        // Сеанса может не быть: сервис сам войдёт по сохранённым логину и паролю.
+        string cookie = await _session.GetCookieAsync(cancellationToken);
 
         byte[] payload = await _rutrackerClient.DownloadTorrentAsync(
-            new RutrackerDownloadRequest(topicId, settings.RutrackerCookie, settings.RequestTimeout),
+            new RutrackerDownloadRequest(topicId, cookie, settings.RequestTimeout),
             cancellationToken);
 
         TorrentMetadata metadata = ParseMetadata(payload, topicId);

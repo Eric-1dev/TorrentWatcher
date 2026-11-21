@@ -36,7 +36,40 @@ DELETE {{host}}/api/torrents/{{torrentId}}
 GET {{host}}/api/settings
 Accept: application/json
 
-### Сохранить настройки (кука — только когда меняется)
+### Сохранить настройки (логин/пароль — только когда меняются)
+PUT {{host}}/api/settings
+Content-Type: application/json
+
+{
+  "rutrackerLogin": "user",
+  "rutrackerPassword": "secret",
+  "scanIntervalMinutes": 60,
+  "autoScanEnabled": true,
+  "requestDelayMs": 1500,
+  "requestTimeoutSeconds": 30,
+  "qbittorrentUrl": "http://plex.local:8080",
+  "qbittorrentUsername": "admin",
+  "qbittorrentPassword": "secret",
+  "qbittorrentAutoApply": true
+}
+
+### Проверить соединение с qBittorrent
+POST {{host}}/api/settings/qbittorrent/test
+Accept: application/json
+
+### Применить обновление в qBittorrent вручную
+POST {{host}}/api/torrents/{{torrentId}}/apply
+Accept: application/json
+
+### Войти в рутрекер сохранёнными логином и паролем (может занять до минуты)
+POST {{host}}/api/settings/rutracker/login
+Accept: application/json
+
+### Проверить сеанс по первому отслеживаемому топику
+POST {{host}}/api/settings/test-cookie
+Accept: application/json
+
+### Аварийный ручной сеанс (когда браузер недоступен или рутрекер требует капчу)
 PUT {{host}}/api/settings
 Content-Type: application/json
 
@@ -48,9 +81,22 @@ Content-Type: application/json
   "requestTimeoutSeconds": 30
 }
 
-### Проверить куку по первому отслеживаемому топику
-POST {{host}}/api/settings/test-cookie
+### Пройти проверку Cloudflare браузером (может занять до 90 с)
+POST {{host}}/api/settings/cloudflare/solve
 Accept: application/json
+
+### Сохранить ручной пропуск Cloudflare (cf_clearance + UA из своего браузера)
+PUT {{host}}/api/settings
+Content-Type: application/json
+
+{
+  "scanIntervalMinutes": 60,
+  "autoScanEnabled": true,
+  "requestDelayMs": 1500,
+  "requestTimeoutSeconds": 30,
+  "cloudflareClearanceCookie": "cf_clearance=…",
+  "cloudflareUserAgent": "Mozilla/5.0 …"
+}
 
 ### Статус системы
 GET {{host}}/api/system/status

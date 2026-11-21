@@ -1,0 +1,49 @@
+# ============================================================
+# docker-compose.yaml для TorrentWatcher на сервере.
+#
+# Скрипт развёртывания копирует этот файл в каталог установки только при
+# первом деплое, дальше используется ваша копия — правьте её на сервере.
+# Все настройки — через переменные окружения.
+#
+# APP_PORT — опубликованный на хосте порт UI/API (по умолчанию 8088).
+# Внутри контейнера Kestrel слушает 8080, порт qBittorrent это не затрагивает.
+#
+# Данные (SQLite, .torrent, ключи, профиль Chromium) лежат в ./data рядом
+# с этим файлом. Без этого каталога приложение потеряет настройки и сеанс.
+# ============================================================
+services:
+  torrentwatcher:
+    image: torrentwatcher:latest
+    container_name: torrentwatcher
+    restart: unless-stopped
+    # Chromium активно использует /dev/shm; дефолтных 64 МБ мало.
+    shm_size: "1gb"
+    ports:
+      - "${APP_PORT:-8088}:8080"
+    environment:
+      TZ: Europe/Moscow
+      ConnectionStrings__Default: "Data Source=/data/torrentwatcher.db"
+      Storage__TorrentsDirectory: "/data/torrents"
+      Security__KeysDirectory: "/data/keys"
+      Rutracker__Browser__ProfileDirectory: "/data/browser"
+      Rutracker__Browser__Headless: "false"
+      Rutracker__Browser__DisableSandbox: "true"
+    volumes:
+      - ./data:/data
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - --fail
+        - --silent
+        - --show-error
+        - http://127.0.0.1:8080/api/health
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

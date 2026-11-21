@@ -22,22 +22,42 @@ RUN dotnet publish src/TorrentWatcher.Web/TorrentWatcher.Web.csproj \
     --output /app/publish \
     --no-restore
 
-# Runtime: non-root, /data для SQLite и .torrent
+# Runtime: non-root, /data для SQLite, .torrent и профиля браузера
 FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble AS runtime
 
+# xvfb нужен, потому что Cloudflare не пропускает headless-Chromium.
+# libatomic1 нужен node из Playwright: без него `playwright install --with-deps` не стартует.
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends curl \
+    && apt-get install --yes --no-install-recommends curl xvfb libatomic1 \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /data \
     && chown app:app /data
 
 WORKDIR /app
+
+# Браузеры Playwright ставим в общий каталог, чтобы они были доступны пользователю app.
+# Копируем только саму сборку Playwright: тогда изменение кода не сбрасывает этот слой
+# и ~325 МБ браузеров не скачиваются заново на каждой сборке.
+# Рядом с Microsoft.Playwright.dll нет runtimeconfig.json (это библиотека), поэтому
+# создаём его на время установки — иначе `dotnet ...dll` не запускается.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+COPY --from=build /app/publish/Microsoft.Playwright.dll /app/Microsoft.Playwright.dll
+COPY --from=build /app/publish/.playwright /app/.playwright
+RUN printf '%s' '{"runtimeOptions":{"tfm":"net10.0","framework":{"name":"Microsoft.NETCore.App","version":"10.0.0"}}}' \
+      > /app/Microsoft.Playwright.runtimeconfig.json \
+    && dotnet /app/Microsoft.Playwright.dll install --with-deps chromium \
+    && rm -f /app/Microsoft.Playwright.runtimeconfig.json
+
 COPY --from=build --chown=app:app /app/publish ./
 
 ENV ASPNETCORE_URLS=http://+:8080 \
     ASPNETCORE_ENVIRONMENT=Production \
     ConnectionStrings__Default="Data Source=/data/torrentwatcher.db" \
-    Storage__TorrentsDirectory="/data/torrents"
+    Storage__TorrentsDirectory="/data/torrents" \
+    Security__KeysDirectory="/data/keys" \
+    Rutracker__Browser__ProfileDirectory="/data/browser" \
+    Rutracker__Browser__Headless=false \
+    Rutracker__Browser__DisableSandbox=true
 
 EXPOSE 8080
 VOLUME ["/data"]
@@ -46,4 +66,7 @@ USER app
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl --fail --silent --show-error http://127.0.0.1:8080/api/health || exit 1
 
-ENTRYPOINT ["dotnet", "TorrentWatcher.Web.dll"]
+# Браузер запускается с окном внутри виртуального дисплея Xvfb.
+COPY --chown=app:app docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+ENTRYPOINT ["docker-entrypoint.sh"]

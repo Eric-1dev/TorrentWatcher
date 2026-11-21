@@ -6,6 +6,18 @@ public enum RutrackerFailureKind
     /// <summary>Рутрекер отклонил куку (403/401).</summary>
     CookieInvalid,
 
+    /// <summary>Вход по логину и паролю не выполнен: неверные данные или ошибка формы.</summary>
+    LoginFailed,
+
+    /// <summary>Рутрекер требует капчу при входе; автоматически её не решить.</summary>
+    LoginCaptcha,
+
+    /// <summary>Сохранённый пароль не расшифровывается (потеряны или изменились ключи).</summary>
+    CredentialsUnreadable,
+
+    /// <summary>Cloudflare требует пройти проверку браузера (managed challenge на dl.php).</summary>
+    Challenge,
+
     /// <summary>Топик не найден (404/410).</summary>
     NotFound,
 
@@ -39,6 +51,10 @@ public sealed class RutrackerException : AppException
     private static string MapCode(RutrackerFailureKind kind) => kind switch
     {
         RutrackerFailureKind.CookieInvalid => ErrorCodes.RutrackerCookieInvalid,
+        RutrackerFailureKind.LoginFailed => ErrorCodes.RutrackerLoginFailed,
+        RutrackerFailureKind.LoginCaptcha => ErrorCodes.RutrackerLoginCaptchaRequired,
+        RutrackerFailureKind.CredentialsUnreadable => ErrorCodes.RutrackerCredentialsUnreadable,
+        RutrackerFailureKind.Challenge => ErrorCodes.RutrackerChallengeRequired,
         RutrackerFailureKind.NotFound => ErrorCodes.TopicNotFound,
         RutrackerFailureKind.Network => ErrorCodes.RutrackerUnavailable,
         RutrackerFailureKind.InvalidPayload => ErrorCodes.RutrackerInvalidPayload,

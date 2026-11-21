@@ -489,3 +489,7 @@ data/
 src/TorrentWatcher.Web/ClientApp/node_modules/
 src/TorrentWatcher.Web/ClientApp/dist/
 src/TorrentWatcher.Web/wwwroot/
+
+# Деплой на сервер: секреты и выгружаемые образы
+scripts/deploy/server/deploy.local.cfg
+*.tar

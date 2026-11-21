@@ -80,6 +80,30 @@ public sealed class SqlitePersistenceTests : IDisposable
     }
 
     [Fact]
+    public async Task Settings_TwoSavesInOneContext_DoNotConflict()
+    {
+        await using AppDbContext db = CreateContext();
+        await db.Database.MigrateAsync();
+        AppSettingsRepository repository = new(db);
+
+        AppSetting first = (await repository.FindAsync(CancellationToken.None))!;
+        first.ScanIntervalMinutes = 120;
+        await repository.SaveAsync(first, CancellationToken.None);
+
+        // Второй слой (например, сохранение пропуска Cloudflare) читает настройки
+        // заново в том же scope и сохраняет их.
+        AppSetting second = (await repository.FindAsync(CancellationToken.None))!;
+        second.CloudflareLastError = "тест";
+        await repository.SaveAsync(second, CancellationToken.None);
+
+        AppSetting? reloaded = await repository.FindAsync(CancellationToken.None);
+
+        Assert.NotNull(reloaded);
+        Assert.Equal(120, reloaded.ScanIntervalMinutes);
+        Assert.Equal("тест", reloaded.CloudflareLastError);
+    }
+
+    [Fact]
     public async Task Connection_HasWalBusyTimeoutAndForeignKeys()
     {
         await using AppDbContext db = CreateContext();

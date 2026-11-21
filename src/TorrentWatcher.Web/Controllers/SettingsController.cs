@@ -11,10 +11,17 @@ namespace TorrentWatcher.Web.Controllers;
 public sealed class SettingsController : ControllerBase
 {
     private readonly SettingsService _settingsService;
+    private readonly CloudflareClearanceService _cloudflareService;
+    private readonly RutrackerSessionService _sessionService;
 
-    public SettingsController(SettingsService settingsService)
+    public SettingsController(
+        SettingsService settingsService,
+        CloudflareClearanceService cloudflareService,
+        RutrackerSessionService sessionService)
     {
         _settingsService = settingsService;
+        _cloudflareService = cloudflareService;
+        _sessionService = sessionService;
     }
 
     [HttpGet]
@@ -30,13 +37,44 @@ public sealed class SettingsController : ControllerBase
             request.ScanIntervalMinutes,
             request.AutoScanEnabled,
             request.RequestDelayMs,
-            request.RequestTimeoutSeconds);
+            request.RequestTimeoutSeconds,
+            request.CloudflareClearanceCookie,
+            request.CloudflareUserAgent,
+            request.RutrackerLogin,
+            request.RutrackerPassword,
+            request.QbittorrentUrl,
+            request.QbittorrentUsername,
+            request.QbittorrentPassword,
+            request.QbittorrentAutoApply);
 
         return Ok(await _settingsService.UpdateAsync(update, cancellationToken));
     }
 
-    /// <summary>Пробное скачивание по первому отслеживаемому топику.</summary>
+    /// <summary>Проверка соединения с qBittorrent по сохранённым настройкам.</summary>
+    [HttpPost("qbittorrent/test")]
+    public async Task<ActionResult<TorrentClientTestResult>> TestQbittorrent(
+        CancellationToken cancellationToken) =>
+        Ok(await _settingsService.TestQbittorrentAsync(cancellationToken));
+
+    /// <summary>
+    /// Вход в рутрекер сохранёнными логином и паролем. Браузер может быть занят
+    /// скачиванием, поэтому запрос ждёт очередь и проходит Cloudflare.
+    /// </summary>
+    [HttpPost("rutracker/login")]
+    public async Task<ActionResult<RutrackerLoginResult>> Login(CancellationToken cancellationToken) =>
+        Ok(await _sessionService.LoginForUiAsync(cancellationToken));
+
+    /// <summary>Пробное скачивание по первому отслеживаемому топику (проверка сеанса).</summary>
     [HttpPost("test-cookie")]
     public async Task<ActionResult<CookieTestResult>> TestCookie(CancellationToken cancellationToken) =>
         Ok(await _settingsService.TestCookieAsync(cancellationToken));
+
+    /// <summary>
+    /// Пройти проверку Cloudflare браузером и сохранить пропуск. Может занять до минуты:
+    /// пока идёт челлендж, запрос висит.
+    /// </summary>
+    [HttpPost("cloudflare/solve")]
+    public async Task<ActionResult<CloudflareSolveResult>> SolveCloudflare(
+        CancellationToken cancellationToken) =>
+        Ok(await _cloudflareService.SolveForUiAsync(cancellationToken));
 }

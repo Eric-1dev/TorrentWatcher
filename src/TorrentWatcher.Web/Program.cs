@@ -7,8 +7,10 @@ using System.Text.Json.Serialization;
 using TorrentWatcher.Application.Abstractions;
 using TorrentWatcher.Application.Exceptions;
 using TorrentWatcher.Application.Services;
+using TorrentWatcher.Application.Settings;
 using TorrentWatcher.Infrastructure;
 using TorrentWatcher.Infrastructure.Persistence;
+using TorrentWatcher.Infrastructure.Rutracker;
 using TorrentWatcher.Web.Health;
 using TorrentWatcher.Web.Middleware;
 
@@ -24,12 +26,22 @@ builder.Services
 builder.Services.AddOpenApi();
 
 builder.Services.AddSingleton<ISettingsProvider, SettingsProvider>();
+builder.Services.AddSingleton<SettingsWriteGate>();
+builder.Services.AddSingleton<RutrackerSessionService>();
+builder.Services.AddSingleton<IRutrackerSessionProvider>(
+    provider => provider.GetRequiredService<RutrackerSessionService>());
 builder.Services.AddSingleton<ScanStatusStore>();
 builder.Services.AddSingleton<ScanCoordinator>();
 builder.Services.AddScoped<SettingsService>();
 builder.Services.AddScoped<TorrentService>();
 builder.Services.AddScoped<TorrentScanService>();
+builder.Services.AddScoped<TorrentApplyService>();
+builder.Services.AddScoped<ITorrentUpdateApplier>(
+    provider => provider.GetRequiredService<TorrentApplyService>());
 builder.Services.AddScoped<SystemStatusService>();
+builder.Services.AddScoped<CloudflareClearanceService>();
+builder.Services.AddScoped<ICloudflareClearanceProvider>(
+    provider => provider.GetRequiredService<CloudflareClearanceService>());
 builder.Services.AddHostedService<ScanScheduler>();
 
 builder.Services.Configure<HostOptions>(options =>
@@ -43,7 +55,15 @@ string connectionString =
     builder.Configuration.GetConnectionString("Default") ?? "Data Source=torrentwatcher.db";
 string torrentsDirectory =
     builder.Configuration["Storage:TorrentsDirectory"] ?? Path.Combine("data", "torrents");
-builder.Services.AddInfrastructure(connectionString, torrentsDirectory);
+string keysDirectory =
+    builder.Configuration["Security:KeysDirectory"] ?? Path.Combine("data", "keys");
+
+var browserOptions = new RutrackerBrowserOptions();
+builder.Configuration
+    .GetSection(RutrackerBrowserOptions.SectionName)
+    .Bind(browserOptions);
+
+builder.Services.AddInfrastructure(connectionString, torrentsDirectory, keysDirectory, browserOptions);
 
 var app = builder.Build();
 

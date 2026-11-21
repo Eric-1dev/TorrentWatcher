@@ -1,10 +1,14 @@
 import type {
+  CloudflareSolveResult,
   CookieTestResult,
   ProblemDetails,
+  RutrackerLoginResult,
   ScanStartResult,
   SettingsView,
   SystemStatusView,
+  TorrentApplyResult,
   TorrentCheckResult,
+  TorrentClientTestResult,
   TorrentListResult,
   TorrentView,
   UpdateSettingsInput,
@@ -108,6 +112,9 @@ export const api = {
   checkTorrent: (id: number) =>
     request<TorrentCheckResult>(`/api/torrents/${id}/check`, { method: 'POST' }),
 
+  applyTorrent: (id: number) =>
+    request<TorrentApplyResult>(`/api/torrents/${id}/apply`, { method: 'POST' }),
+
   checkAll: () =>
     request<ScanStartResult>('/api/torrents/check-all', { method: 'POST' }),
 
@@ -119,8 +126,17 @@ export const api = {
       body: JSON.stringify(input),
     }),
 
+  loginRutracker: () =>
+    request<RutrackerLoginResult>('/api/settings/rutracker/login', { method: 'POST' }),
+
   testCookie: () =>
     request<CookieTestResult>('/api/settings/test-cookie', { method: 'POST' }),
+
+  testQbittorrent: () =>
+    request<TorrentClientTestResult>('/api/settings/qbittorrent/test', { method: 'POST' }),
+
+  solveCloudflare: () =>
+    request<CloudflareSolveResult>('/api/settings/cloudflare/solve', { method: 'POST' }),
 
   getSystemStatus: () => request<SystemStatusView>('/api/system/status'),
 }

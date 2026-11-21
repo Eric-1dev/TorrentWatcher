@@ -20,6 +20,9 @@ export interface TorrentView {
   torrentFileDownloadedAtUtc: string
   createdAtUtc: string
   updatedAtUtc: string
+  appliedInfoHashV1: string | null
+  appliedAtUtc: string | null
+  applyError: string | null
 }
 
 export interface TorrentListResult {
@@ -34,6 +37,14 @@ export interface TorrentCheckResult {
   changed: boolean
   errorCode: string | null
   shouldStopScan: boolean
+  success: boolean
+}
+
+export interface TorrentApplyResult {
+  torrent: TorrentView
+  applied: boolean
+  errorCode: string | null
+  message: string
   success: boolean
 }
 
@@ -59,28 +70,70 @@ export interface ScanStartResult {
 export interface SettingsView {
   hasCookie: boolean
   maskedCookie: string | null
+  rutrackerLogin: string | null
+  hasPassword: boolean
+  hasCredentials: boolean
   cookieVerifiedAtUtc: string | null
   cookieLastError: string | null
+  hasCloudflareClearance: boolean
+  cloudflareUserAgent: string | null
+  cloudflareClearanceObtainedAtUtc: string | null
+  cloudflareClearanceExpiresAtUtc: string | null
+  cloudflareLastError: string | null
   scanIntervalMinutes: number
   autoScanEnabled: boolean
   requestDelayMs: number
   requestTimeoutSeconds: number
   lastScanAtUtc: string | null
   updatedAtUtc: string
+  qbittorrentUrl: string | null
+  qbittorrentUsername: string | null
+  hasQbittorrentPassword: boolean
+  qbittorrentConfigured: boolean
+  qbittorrentAutoApply: boolean
+  qbittorrentVerifiedAtUtc: string | null
+  qbittorrentLastError: string | null
 }
 
 export interface UpdateSettingsInput {
   rutrackerCookie?: string | null
+  rutrackerLogin?: string | null
+  rutrackerPassword?: string | null
   scanIntervalMinutes: number
   autoScanEnabled: boolean
   requestDelayMs: number
   requestTimeoutSeconds: number
+  cloudflareClearanceCookie?: string | null
+  cloudflareUserAgent?: string | null
+  qbittorrentUrl?: string | null
+  qbittorrentUsername?: string | null
+  qbittorrentPassword?: string | null
+  qbittorrentAutoApply?: boolean | null
+}
+
+export interface TorrentClientTestResult {
+  success: boolean
+  checkedAtUtc: string
+  message: string
+}
+
+export interface CloudflareSolveResult {
+  success: boolean
+  message: string
+  obtainedAtUtc: string | null
+  expiresAtUtc: string | null
 }
 
 export interface CookieTestResult {
   success: boolean
   checkedAtUtc: string
   message: string
+}
+
+export interface RutrackerLoginResult {
+  success: boolean
+  message: string
+  loggedInAtUtc: string | null
 }
 
 export interface SystemStatusView {

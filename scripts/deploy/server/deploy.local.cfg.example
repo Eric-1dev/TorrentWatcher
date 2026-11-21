@@ -1,0 +1,19 @@
+; Локальные настройки deploy_server.bat (формат KEY=VALUE).
+; deploy_server.bat создаёт scripts\deploy\server\deploy.local.cfg автоматически после первого запуска.
+; Можно скопировать этот файл в scripts\deploy\server\deploy.local.cfg и заполнить заранее.
+; scripts\deploy\server\deploy.local.cfg в .gitignore — секреты в репозиторий не попадают.
+;
+; SSH_AUTH: либо -i "C:\path\to\key.ppk", либо -pw "yourpassword".
+; SSH_USER — root или другая УЗ. Для не-root нужен sudo: либо NOPASSWD,
+; либо deploy_server.bat спросит пароль sudo при запуске (в cfg он не сохраняется).
+; Если sudo нет, но УЗ в группе docker, укажите INSTALL_DIR в домашнем каталоге.
+; APP_PORT — опубликованный на хосте порт UI/API (qBittorrent обычно занимает 8080).
+; INSTALL_DIR — каталог на сервере, где лежат docker-compose.yaml, state и data.
+; PSCP_COMPRESS=0 (переменная окружения перед запуском) отключает сжатие образа при передаче.
+
+SSH_USER=root
+SSH_HOST=your-server.example.com
+SSH_AUTH=-i "C:\Users\YOU\keys\server.ppk"
+APP_PORT=8088
+INSTALL_DIR=/torrentwatcher
+REMOTE_DIR=/tmp

@@ -40,6 +40,23 @@ public sealed class TrackedTorrent
     /// <summary>Дата последнего обнаруженного обновления.</summary>
     public DateTime? LastChangedAtUtc { get; set; }
 
+    /// <summary>
+    /// Infohash, который последний раз успешно применён в qBittorrent. Если он не совпадает
+    /// с <see cref="InfoHashV1"/>, в клиенте лежит старая версия раздачи.
+    /// </summary>
+    public string? AppliedInfoHashV1 { get; set; }
+
+    public DateTime? AppliedAtUtc { get; set; }
+
+    /// <summary>
+    /// Старый infohash, который нужно удалить из qBittorrent при применении обновления.
+    /// Хранится, пока замена не завершится, чтобы повтор после сбоя не потерял старую раздачу.
+    /// </summary>
+    public string? SupersededInfoHashV1 { get; set; }
+
+    /// <summary>Последняя ошибка применения в qBittorrent; скачивание при этом успешно.</summary>
+    public string? ApplyError { get; set; }
+
     /// <summary>Пауза для отдельного торрента: выключенные не попадают в автоскан.</summary>
     public bool IsEnabled { get; set; } = true;
 

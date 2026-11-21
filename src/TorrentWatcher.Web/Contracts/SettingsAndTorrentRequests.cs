@@ -11,12 +11,20 @@ public sealed record AddTorrentRequest(
 public sealed record SetEnabledRequest(bool IsEnabled);
 
 /// <summary>
-/// Тело PUT /api/settings. <see cref="RutrackerCookie"/> = <c>null</c> — не менять куку:
-/// UI присылает только новое значение, а не маску.
+/// Тело PUT /api/settings. <c>null</c> у секретов — не менять: UI присылает только новое
+/// значение, а не маску. Пустая строка очищает логин, пароль или ручную куку.
 /// </summary>
 public sealed record UpdateSettingsRequest(
     string? RutrackerCookie,
     int ScanIntervalMinutes,
     bool AutoScanEnabled,
     int RequestDelayMs,
-    int RequestTimeoutSeconds);
+    int RequestTimeoutSeconds,
+    string? CloudflareClearanceCookie = null,
+    string? CloudflareUserAgent = null,
+    string? RutrackerLogin = null,
+    string? RutrackerPassword = null,
+    string? QbittorrentUrl = null,
+    string? QbittorrentUsername = null,
+    string? QbittorrentPassword = null,
+    bool? QbittorrentAutoApply = null);

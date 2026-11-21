@@ -22,6 +22,9 @@ public sealed class TrackedTorrentConfiguration : IEntityTypeConfiguration<Track
         builder.Property(torrent => torrent.TorrentFileSha256).IsRequired().HasMaxLength(64).IsFixedLength();
         builder.Property(torrent => torrent.LastCheckOutcome).IsRequired().HasConversion<int>();
         builder.Property(torrent => torrent.LastError).HasMaxLength(4000);
+        builder.Property(torrent => torrent.AppliedInfoHashV1).HasMaxLength(40).IsFixedLength();
+        builder.Property(torrent => torrent.SupersededInfoHashV1).HasMaxLength(40).IsFixedLength();
+        builder.Property(torrent => torrent.ApplyError).HasMaxLength(4000);
         builder.Property(torrent => torrent.IsEnabled).IsRequired();
         builder.Property(torrent => torrent.CreatedAtUtc).IsRequired();
         builder.Property(torrent => torrent.UpdatedAtUtc).IsRequired();

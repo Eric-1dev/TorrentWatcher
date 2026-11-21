@@ -150,6 +150,8 @@ async function checkOne(torrent: TorrentView) {
       showError(
         new Error(result.torrent.lastError ?? 'Проверка завершилась ошибкой.'),
       )
+    } else if (isApplied(result.torrent)) {
+      showSuccess(`Обновление обнаружено и применено в qBittorrent: «${result.torrent.title}».`)
     } else if (result.changed) {
       showSuccess(`Обнаружено обновление: «${result.torrent.title}».`)
     } else {
@@ -159,6 +161,28 @@ async function checkOne(torrent: TorrentView) {
     await refreshStatus()
   } catch (error) {
     showError(error, 'Не удалось проверить торрент.')
+  } finally {
+    busyIds.delete(torrent.id)
+  }
+}
+
+async function applyOne(torrent: TorrentView) {
+  if (busyIds.has(torrent.id)) {
+    return
+  }
+
+  busyIds.add(torrent.id)
+  try {
+    const result = await api.applyTorrent(torrent.id)
+    replaceTorrent(result.torrent)
+
+    if (result.success) {
+      showSuccess(result.message)
+    } else {
+      showError(new Error(result.message))
+    }
+  } catch (error) {
+    showError(error, 'Не удалось применить обновление в qBittorrent.')
   } finally {
     busyIds.delete(torrent.id)
   }
@@ -231,6 +255,27 @@ function statusOf(torrent: TorrentView): { label: string; severity: 'success' | 
     default:
       return { label: 'Не проверялся', severity: 'secondary' }
   }
+}
+
+function isApplied(torrent: TorrentView): boolean {
+  return (
+    torrent.appliedInfoHashV1 !== null &&
+    torrent.appliedInfoHashV1.toLowerCase() === torrent.infoHashV1.toLowerCase() &&
+    !torrent.applyError
+  )
+}
+
+function applyStatusOf(torrent: TorrentView): {
+  label: string
+  severity: 'success' | 'warn' | 'danger' | 'secondary'
+} {
+  if (torrent.applyError) {
+    return { label: 'Ошибка применения', severity: 'danger' }
+  }
+
+  return isApplied(torrent)
+    ? { label: 'Применено', severity: 'success' }
+    : { label: 'Не применено', severity: 'secondary' }
 }
 
 function formatDuration(milliseconds: number): string {
@@ -336,6 +381,20 @@ function formatDuration(milliseconds: number): string {
         </template>
       </Column>
 
+      <Column header="qBittorrent">
+        <template #body="{ data }">
+          <div class="status-cell">
+            <Tag :value="applyStatusOf(data).label" :severity="applyStatusOf(data).severity" />
+            <span v-if="isApplied(data) && data.appliedAtUtc" class="muted small">
+              {{ formatDateTime(data.appliedAtUtc) }}
+            </span>
+            <span v-if="data.applyError" class="error-text" :title="data.applyError">
+              {{ data.applyError }}
+            </span>
+          </div>
+        </template>
+      </Column>
+
       <Column header="Обновлён">
         <template #body="{ data }">
           {{ formatDateTime(data.lastChangedAtUtc) }}
@@ -369,6 +428,15 @@ function formatDuration(milliseconds: number): string {
               title="Проверить сейчас"
               :loading="busyIds.has(data.id)"
               @click="checkOne(data)"
+            />
+            <Button
+              icon="pi pi-cloud-upload"
+              text
+              rounded
+              aria-label="Применить в qBittorrent"
+              title="Применить обновление в qBittorrent"
+              :disabled="busyIds.has(data.id) || isApplied(data)"
+              @click="applyOne(data)"
             />
             <Button
               icon="pi pi-trash"

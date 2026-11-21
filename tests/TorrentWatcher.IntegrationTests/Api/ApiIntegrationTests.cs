@@ -162,6 +162,91 @@ public sealed class ApiIntegrationTests
     }
 
     [Fact]
+    public async Task Settings_PutCredentials_StoresLoginAndNeverReturnsPassword()
+    {
+        using var app = new TestWebApplicationFactory();
+        using HttpClient client = app.CreateClient();
+
+        HttpResponseMessage put = await client.PutAsJsonAsync("/api/settings", new
+        {
+            rutrackerLogin = "user",
+            rutrackerPassword = "supersecret",
+            scanIntervalMinutes = 15,
+            autoScanEnabled = false,
+            requestDelayMs = 250,
+            requestTimeoutSeconds = 10,
+        });
+
+        Assert.Equal(HttpStatusCode.OK, put.StatusCode);
+
+        string raw = await put.Content.ReadAsStringAsync();
+        Assert.DoesNotContain("supersecret", raw);
+
+        JsonElement body = JsonDocument.Parse(raw).RootElement;
+        Assert.Equal("user", body.GetProperty("rutrackerLogin").GetString());
+        Assert.True(body.GetProperty("hasPassword").GetBoolean());
+        Assert.True(body.GetProperty("hasCredentials").GetBoolean());
+
+        string getRaw = await client.GetStringAsync("/api/settings");
+        Assert.DoesNotContain("supersecret", getRaw);
+    }
+
+    [Fact]
+    public async Task Settings_Qbittorrent_StoresPasswordMaskedAndReportsConfigured()
+    {
+        using var app = new TestWebApplicationFactory();
+        using HttpClient client = app.CreateClient();
+
+        HttpResponseMessage put = await client.PutAsJsonAsync("/api/settings", new
+        {
+            scanIntervalMinutes = 60,
+            autoScanEnabled = true,
+            requestDelayMs = 1500,
+            requestTimeoutSeconds = 30,
+            qbittorrentUrl = "http://plex.local:8080/",
+            qbittorrentUsername = "admin",
+            qbittorrentPassword = "qbsecret",
+            qbittorrentAutoApply = true,
+        });
+
+        Assert.Equal(HttpStatusCode.OK, put.StatusCode);
+
+        string raw = await put.Content.ReadAsStringAsync();
+        Assert.DoesNotContain("qbsecret", raw);
+
+        JsonElement body = JsonDocument.Parse(raw).RootElement;
+        Assert.Equal("http://plex.local:8080", body.GetProperty("qbittorrentUrl").GetString());
+        Assert.Equal("admin", body.GetProperty("qbittorrentUsername").GetString());
+        Assert.True(body.GetProperty("hasQbittorrentPassword").GetBoolean());
+        Assert.True(body.GetProperty("qbittorrentConfigured").GetBoolean());
+        Assert.True(body.GetProperty("qbittorrentAutoApply").GetBoolean());
+
+        string getRaw = await client.GetStringAsync("/api/settings");
+        Assert.DoesNotContain("qbsecret", getRaw);
+    }
+
+    [Fact]
+    public async Task Settings_QbittorrentInvalidUrl_Returns400()
+    {
+        using var app = new TestWebApplicationFactory();
+        using HttpClient client = app.CreateClient();
+
+        HttpResponseMessage response = await client.PutAsJsonAsync("/api/settings", new
+        {
+            scanIntervalMinutes = 60,
+            autoScanEnabled = true,
+            requestDelayMs = 1500,
+            requestTimeoutSeconds = 30,
+            qbittorrentUrl = "plex.local:8080",
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        JsonElement body = await ReadJsonAsync(response);
+        Assert.Equal(ErrorCodes.SettingsInvalid, body.GetProperty("code").GetString());
+    }
+
+    [Fact]
     public async Task Settings_InvalidInterval_Returns400WithCode()
     {
         using var app = new TestWebApplicationFactory();

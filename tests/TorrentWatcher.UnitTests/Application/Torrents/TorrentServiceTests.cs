@@ -96,7 +96,8 @@ public sealed class TorrentServiceTests
             rutracker,
             SettingsWithCookie(cookie: string.Empty));
 
-        AppException exception = await Assert.ThrowsAsync<AppException>(
+        // Сеанс бросает RutrackerException — наследника AppException с тем же кодом.
+        AppException exception = await Assert.ThrowsAnyAsync<AppException>(
             () => service.AddAsync("123456", CancellationToken.None));
 
         Assert.Equal(ErrorCodes.RutrackerCookieInvalid, exception.Code);
@@ -159,6 +160,27 @@ public sealed class TorrentServiceTests
         Assert.Equal(2, result.UpdateAvailableCount);
         Assert.True(result.HasUpdates);
         Assert.Equal(new[] { 1, 2, 3, 4 }, result.Items.Select(item => item.Id));
+    }
+
+    [Fact]
+    public async Task GetAllAsync_AppliedChange_IsNotCountedAsPending()
+    {
+        TrackedTorrent applied = Torrent(1, 10, TorrentCheckOutcome.Changed);
+        applied.AppliedInfoHashV1 = applied.InfoHashV1;
+
+        var repository = new InMemoryTrackedTorrentRepository(
+            applied,
+            Torrent(2, 20, TorrentCheckOutcome.Changed));
+
+        TorrentService service = CreateService(
+            repository,
+            new RecordingTorrentFileStorage(Now),
+            new StubRutrackerClient(_ => Task.FromResult(Array.Empty<byte>())),
+            SettingsWithCookie());
+
+        TorrentListResult result = await service.GetAllAsync(CancellationToken.None);
+
+        Assert.Equal(1, result.UpdateAvailableCount);
     }
 
     [Fact]
@@ -247,7 +269,13 @@ public sealed class TorrentServiceTests
         ITorrentFileStorage storage,
         IRutrackerClient rutracker,
         ISettingsProvider settingsProvider) =>
-        new(repository, rutracker, storage, settingsProvider, new FixedTimeProvider(Now));
+        new(
+            repository,
+            rutracker,
+            StubRutrackerSessionProvider.FromSettings(settingsProvider),
+            storage,
+            settingsProvider,
+            new FixedTimeProvider(Now));
 
     private static SettingsProvider SettingsWithCookie(
         string cookie = "bb_session=secret",

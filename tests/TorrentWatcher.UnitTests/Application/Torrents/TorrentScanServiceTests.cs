@@ -140,6 +140,53 @@ public sealed class TorrentScanServiceTests
         Assert.Equal(0, storage.SaveCount);
     }
 
+    [Fact]
+    public async Task CheckAsync_ChangedWithAutoApply_RemembersSupersededHashAndCallsApplier()
+    {
+        (byte[] payload, _) = TorrentFixtures.SingleFile();
+        string oldHash = new('f', 40);
+
+        TrackedTorrent torrent = Torrent();
+        torrent.InfoHashV1 = oldHash;
+
+        var repository = new InMemoryTrackedTorrentRepository(torrent);
+        var applier = new StubTorrentUpdateApplier();
+        TorrentScanService service = CreateService(
+            repository,
+            new RecordingTorrentFileStorage(Now),
+            new StubRutrackerClient(_ => Task.FromResult(payload)),
+            SettingsWithCookie(qbittorrentAutoApply: true),
+            applier);
+
+        TorrentCheckResult result = await service.CheckAsync(torrent.Id, CancellationToken.None);
+
+        Assert.True(result.Success);
+        Assert.Equal(1, applier.ApplyCount);
+        Assert.False(applier.ForceFlags[0]);
+        Assert.Equal(oldHash, repository.Torrents[0].SupersededInfoHashV1);
+    }
+
+    [Fact]
+    public async Task CheckAsync_ChangedWithAutoApplyDisabled_DoesNotCallApplier()
+    {
+        (byte[] payload, _) = TorrentFixtures.SingleFile();
+
+        TrackedTorrent torrent = Torrent();
+        torrent.InfoHashV1 = new string('f', 40);
+
+        var applier = new StubTorrentUpdateApplier();
+        TorrentScanService service = CreateService(
+            new InMemoryTrackedTorrentRepository(torrent),
+            new RecordingTorrentFileStorage(Now),
+            new StubRutrackerClient(_ => Task.FromResult(payload)),
+            SettingsWithCookie(),
+            applier);
+
+        await service.CheckAsync(torrent.Id, CancellationToken.None);
+
+        Assert.Equal(0, applier.ApplyCount);
+    }
+
     [Theory]
     [InlineData(RutrackerFailureKind.CookieInvalid, ErrorCodes.RutrackerCookieInvalid)]
     [InlineData(RutrackerFailureKind.InvalidPayload, ErrorCodes.RutrackerInvalidPayload)]
@@ -207,7 +254,7 @@ public sealed class TorrentScanServiceTests
 
         Assert.Equal(ErrorCodes.RutrackerCookieInvalid, result.ErrorCode);
         Assert.True(result.ShouldStopScan);
-        Assert.Contains("не задана", result.Torrent.LastError);
+        Assert.Contains("Логин и пароль", result.Torrent.LastError);
         Assert.Empty(rutracker.Requests);
     }
 
@@ -253,15 +300,30 @@ public sealed class TorrentScanServiceTests
         ITrackedTorrentRepository repository,
         RecordingTorrentFileStorage storage,
         IRutrackerClient rutracker,
-        ISettingsProvider? settingsProvider = null) =>
-        new(repository, rutracker, storage, settingsProvider ?? SettingsWithCookie(), new FixedTimeProvider(Now));
+        ISettingsProvider? settingsProvider = null,
+        ITorrentUpdateApplier? updateApplier = null)
+    {
+        ISettingsProvider settings = settingsProvider ?? SettingsWithCookie();
 
-    private static SettingsProvider SettingsWithCookie(string cookie = "bb_session=secret")
+        return new(
+            repository,
+            rutracker,
+            StubRutrackerSessionProvider.FromSettings(settings),
+            storage,
+            settings,
+            updateApplier ?? new StubTorrentUpdateApplier(),
+            new FixedTimeProvider(Now));
+    }
+
+    private static SettingsProvider SettingsWithCookie(
+        string cookie = "bb_session=secret",
+        bool qbittorrentAutoApply = false)
     {
         var provider = new SettingsProvider();
         provider.Apply(AppSettingsSnapshot.FromEntity(new AppSetting
         {
             RutrackerCookie = cookie,
+            QbittorrentAutoApply = qbittorrentAutoApply,
             RequestTimeoutSeconds = 30,
             UpdatedAtUtc = Now.UtcDateTime,
         }));

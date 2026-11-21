@@ -18,7 +18,10 @@ public sealed record TorrentView(
     bool IsEnabled,
     DateTime TorrentFileDownloadedAtUtc,
     DateTime CreatedAtUtc,
-    DateTime UpdatedAtUtc)
+    DateTime UpdatedAtUtc,
+    string? AppliedInfoHashV1,
+    DateTime? AppliedAtUtc,
+    string? ApplyError)
 {
     public static TorrentView FromEntity(TrackedTorrent torrent)
     {
@@ -39,6 +42,9 @@ public sealed record TorrentView(
             torrent.IsEnabled,
             torrent.TorrentFileDownloadedAtUtc,
             torrent.CreatedAtUtc,
-            torrent.UpdatedAtUtc);
+            torrent.UpdatedAtUtc,
+            torrent.AppliedInfoHashV1,
+            torrent.AppliedAtUtc,
+            torrent.ApplyError);
     }
 }

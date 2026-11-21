@@ -19,21 +19,27 @@ public sealed class TorrentScanService
 
     private readonly ITrackedTorrentRepository _torrentRepository;
     private readonly IRutrackerClient _rutrackerClient;
+    private readonly IRutrackerSessionProvider _session;
     private readonly ITorrentFileStorage _fileStorage;
     private readonly ISettingsProvider _settingsProvider;
+    private readonly ITorrentUpdateApplier _updateApplier;
     private readonly TimeProvider _timeProvider;
 
     public TorrentScanService(
         ITrackedTorrentRepository torrentRepository,
         IRutrackerClient rutrackerClient,
+        IRutrackerSessionProvider session,
         ITorrentFileStorage fileStorage,
         ISettingsProvider settingsProvider,
+        ITorrentUpdateApplier updateApplier,
         TimeProvider timeProvider)
     {
         _torrentRepository = torrentRepository;
         _rutrackerClient = rutrackerClient;
+        _session = session;
         _fileStorage = fileStorage;
         _settingsProvider = settingsProvider;
+        _updateApplier = updateApplier;
         _timeProvider = timeProvider;
     }
 
@@ -47,22 +53,15 @@ public sealed class TorrentScanService
         TrackedTorrent torrent = await GetRequiredAsync(id, cancellationToken);
         AppSettingsSnapshot settings = _settingsProvider.Current;
         DateTime now = UtcNow();
-
-        if (string.IsNullOrWhiteSpace(settings.RutrackerCookie))
-        {
-            return await RecordFailureAsync(
-                torrent,
-                ErrorCodes.RutrackerCookieInvalid,
-                "Кука рутрекера не задана. Сохраните её в настройках.",
-                shouldStopScan: true,
-                now,
-                cancellationToken);
-        }
+        string previousInfoHash = torrent.InfoHashV1;
 
         try
         {
+            // Если кэша куки нет, сеанс сам войдёт по сохранённым логину и паролю.
+            string cookie = await _session.GetCookieAsync(cancellationToken);
+
             byte[] payload = await _rutrackerClient.DownloadTorrentAsync(
-                new RutrackerDownloadRequest(torrent.TopicId, settings.RutrackerCookie, settings.RequestTimeout),
+                new RutrackerDownloadRequest(torrent.TopicId, cookie, settings.RequestTimeout),
                 cancellationToken);
 
             TorrentMetadata metadata = ParseMetadata(payload, torrent.TopicId);
@@ -91,9 +90,22 @@ public sealed class TorrentScanService
             if (changed)
             {
                 torrent.LastChangedAtUtc = now;
+
+                // Старый infohash нужен, чтобы убрать из qBittorrent прежнюю раздачу.
+                if (previousInfoHash.Length > 0
+                    && !string.Equals(previousInfoHash, torrent.InfoHashV1, StringComparison.OrdinalIgnoreCase))
+                {
+                    torrent.SupersededInfoHashV1 = previousInfoHash;
+                }
             }
 
             await _torrentRepository.UpdateAsync(torrent, cancellationToken);
+
+            // Сбой qBittorrent не должен делать проверку ошибочной: он попадёт в ApplyError.
+            if (_settingsProvider.Current.QbittorrentAutoApply)
+            {
+                await _updateApplier.ApplyAsync(torrent, force: false, cancellationToken);
+            }
 
             return new TorrentCheckResult(TorrentView.FromEntity(torrent), changed, null, ShouldStopScan: false);
         }
@@ -159,7 +171,12 @@ public sealed class TorrentScanService
 
     /// <summary>403/капча/битый ответ повторятся на следующих торрентах — скан прерывается.</summary>
     private static bool ShouldStopScanFor(string errorCode) =>
-        errorCode is ErrorCodes.RutrackerCookieInvalid or ErrorCodes.RutrackerInvalidPayload;
+        errorCode is ErrorCodes.RutrackerCookieInvalid
+            or ErrorCodes.RutrackerLoginFailed
+            or ErrorCodes.RutrackerLoginCaptchaRequired
+            or ErrorCodes.RutrackerCredentialsUnreadable
+            or ErrorCodes.RutrackerInvalidPayload
+            or ErrorCodes.RutrackerChallengeRequired;
 
     private DateTime UtcNow() => _timeProvider.GetUtcNow().UtcDateTime;
 

@@ -182,8 +182,14 @@ public sealed class ScanSchedulerTests
             services.AddSingleton<ITrackedTorrentRepository>(Torrents);
             services.AddSingleton<IAppSettingsRepository>(SettingsRepository);
             services.AddSingleton<IRutrackerClient>(Rutracker);
+            services.AddSingleton<IRutrackerSessionProvider>(
+                StubRutrackerSessionProvider.FromSettings(Settings));
+            services.AddSingleton<ISecretProtector, StubSecretProtector>();
             services.AddSingleton<ITorrentFileStorage>(new RecordingTorrentFileStorage(Now));
             services.AddSingleton<ISettingsProvider>(Settings);
+            services.AddSingleton<ITorrentClient, RecordingTorrentClient>();
+            services.AddSingleton<ITorrentUpdateApplier, StubTorrentUpdateApplier>();
+            services.AddSingleton<SettingsWriteGate>();
             services.AddSingleton<TimeProvider>(Time);
             services.AddScoped<TorrentScanService>();
             services.AddScoped<SettingsService>();

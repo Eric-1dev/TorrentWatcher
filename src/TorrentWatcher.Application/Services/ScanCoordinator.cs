@@ -169,12 +169,35 @@ public sealed class ScanCoordinator : IDisposable
                     if (consecutiveStopFailures >= StopAfterConsecutiveFailures)
                     {
                         finalState = ScanRunState.Failed;
-                        message = "Скан прерван: рутрекер не принимает куку или отдаёт не .torrent.";
 
-                        await TryInvalidateCookieAsync(
-                            settingsService,
-                            result.Torrent.LastError ?? message,
-                            cancellationToken).ConfigureAwait(false);
+                        // Челлендж Cloudflare не означает, что кука неверна: не сбрасываем
+                        // её и не просим пользователя менять куку, а указываем на кнопку проверки.
+                        if (result.ErrorCode == ErrorCodes.RutrackerChallengeRequired)
+                        {
+                            message = "Скан прерван: Cloudflare требует проверки браузера. "
+                                + "Откройте настройки и нажмите «Пройти проверку Cloudflare».";
+                        }
+                        else if (result.ErrorCode is ErrorCodes.RutrackerLoginFailed
+                            or ErrorCodes.RutrackerLoginCaptchaRequired
+                            or ErrorCodes.RutrackerCredentialsUnreadable)
+                        {
+                            message = "Скан прерван: не удалось войти в рутрекер. "
+                                + "Проверьте логин и пароль в настройках.";
+
+                            await TryInvalidateCookieAsync(
+                                settingsService,
+                                result.Torrent.LastError ?? message,
+                                cancellationToken).ConfigureAwait(false);
+                        }
+                        else
+                        {
+                            message = "Скан прерван: рутрекер не принимает куку или отдаёт не .torrent.";
+
+                            await TryInvalidateCookieAsync(
+                                settingsService,
+                                result.Torrent.LastError ?? message,
+                                cancellationToken).ConfigureAwait(false);
+                        }
 
                         break;
                     }

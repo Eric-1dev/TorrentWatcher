@@ -25,6 +25,24 @@ namespace TorrentWatcher.Infrastructure.Persistence.Migrations
                     b.Property<bool>("AutoScanEnabled")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("CloudflareClearanceCookie")
+                        .HasMaxLength(4000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("CloudflareClearanceExpiresAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("CloudflareClearanceObtainedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CloudflareLastError")
+                        .HasMaxLength(4000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CloudflareUserAgent")
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("CookieLastError")
                         .HasMaxLength(4000)
                         .HasColumnType("TEXT");
@@ -33,6 +51,31 @@ namespace TorrentWatcher.Infrastructure.Persistence.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime?>("LastScanAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("QbittorrentAutoApply")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("QbittorrentLastError")
+                        .HasMaxLength(4000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("QbittorrentPasswordProtected")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("QbittorrentUrl")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("QbittorrentUsername")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("QbittorrentVerifiedAtUtc")
                         .HasColumnType("TEXT");
 
                     b.Property<int>("RequestDelayMs")
@@ -44,6 +87,16 @@ namespace TorrentWatcher.Infrastructure.Persistence.Migrations
                     b.Property<string>("RutrackerCookie")
                         .IsRequired()
                         .HasMaxLength(4000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RutrackerLogin")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RutrackerPasswordProtected")
+                        .IsRequired()
+                        .HasMaxLength(2000)
                         .HasColumnType("TEXT");
 
                     b.Property<int>("ScanIntervalMinutes")
@@ -61,9 +114,15 @@ namespace TorrentWatcher.Infrastructure.Persistence.Migrations
                         {
                             Id = 1,
                             AutoScanEnabled = true,
+                            QbittorrentAutoApply = false,
+                            QbittorrentPasswordProtected = "",
+                            QbittorrentUrl = "",
+                            QbittorrentUsername = "",
                             RequestDelayMs = 1500,
                             RequestTimeoutSeconds = 30,
                             RutrackerCookie = "",
+                            RutrackerLogin = "",
+                            RutrackerPasswordProtected = "",
                             ScanIntervalMinutes = 60,
                             UpdatedAtUtc = new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc)
                         });
@@ -74,6 +133,18 @@ namespace TorrentWatcher.Infrastructure.Persistence.Migrations
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("AppliedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AppliedInfoHashV1")
+                        .HasMaxLength(40)
+                        .HasColumnType("TEXT")
+                        .IsFixedLength();
+
+                    b.Property<string>("ApplyError")
+                        .HasMaxLength(4000)
+                        .HasColumnType("TEXT");
 
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("TEXT");
@@ -102,6 +173,11 @@ namespace TorrentWatcher.Infrastructure.Persistence.Migrations
                     b.Property<string>("LastError")
                         .HasMaxLength(4000)
                         .HasColumnType("TEXT");
+
+                    b.Property<string>("SupersededInfoHashV1")
+                        .HasMaxLength(40)
+                        .HasColumnType("TEXT")
+                        .IsFixedLength();
 
                     b.Property<string>("Title")
                         .IsRequired()

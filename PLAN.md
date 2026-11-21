@@ -1,8 +1,8 @@
 # TorrentWatcher — план реализации
 
-Статус: план выполнен (TW-01–TW-28).
+Статус: план выполнен (TW-01–TW-40).
 Следующий пункт: **нет — все задачи закрыты**.
-Версия плана: 3 (2026-11-17).
+Версия плана: 8 (2026-11-21).
 
 ---
 
@@ -36,11 +36,14 @@
 - Периодический автоскан с глобальным интервалом, применяемым без перезапуска.
 - Форс-проверка одного торрента и всех сразу.
 - Определение изменения по infohash; сохранение только последнего `.torrent`-файла.
+- Применение обновлений в qBittorrent (Web UI API v2): замена раздачи с сохранением папки,
+  категории, тегов и уже скачанных файлов; авто-применение и ручная кнопка.
 - Web UI на Vue 3 + TS, API на ASP.NET Core (net10), SQLite + EF Core, Docker.
 
 ### Не входит в скоуп (сейчас)
 
-- Интеграция с qBittorrent (только задел в виде порта и статуса «обнаружено обновление»).
+- ~~Интеграция с qBittorrent (только задел в виде порта и статуса «обнаружено обновление»).~~
+  → реализована в TW-39 (этап 12).
 - Уведомления (Telegram/ntfy/e-mail).
 - История обновлений и любые журналы событий в БД.
 - Авторизация, мультипользовательность, несколько кук.
@@ -55,7 +58,7 @@
 |---|---|
 | Стек | .NET 10 (SDK 10.0.401), ASP.NET Core MVC-контроллеры, EF Core 10, SQLite |
 | Слои | `Domain` → `Application` → `Infrastructure` / `Web` (Web знает Infrastructure только для DI) |
-| Кука рутрекера | одна глобальная, в таблице настроек, plaintext |
+| Кука рутрекера | ~~одна глобальная, в таблице настроек, plaintext~~ → одна глобальная пара логин/пароль; пароль шифруется Data Protection (ключи вне БД), кука сеанса кэшируется в настройках и профиле Chromium; ручная кука — аварийный вариант |
 | Период | глобальный, минуты, 1…1440, применяется на лету |
 | Заголовок торрента | `name` из info-словаря `.torrent`; HTML рутрекера не парсим |
 | Хранение `.torrent` | только последний файл: `/data/torrents/{topicId}.torrent` |
@@ -64,6 +67,8 @@
 | Планировщик | один `BackgroundService` с `while(true)` + `Task.Delay`, без Quartz/Hangfire |
 | UI-фреймворк | PrimeVue 4 (MIT) + тема Aura, иконки PrimeIcons |
 | Обнаружено обновление | статус `UpdateAvailable` + дата; ничего не качаем |
+| qBittorrent | API v2 Web UI: старая раздача удаляется без файлов, новая добавляется в ту же папку (`savepath`/категория/теги старой), затем recheck + resume; авто-применение и ручная кнопка |
+| Cloudflare на `dl.php` | managed challenge обходится Playwright ради `cf_clearance`; `.torrent` качает `HttpClient`; ручной режим — fallback |
 | Авторизация | нет; слушать LAN/localhost, предупреждение в README |
 
 ---
@@ -92,12 +97,16 @@ C:\Work\TorrentWatcher\
 Ключевые файлы по слоям:
 
 - `Domain`: `Entities/{TrackedTorrent,AppSetting}.cs`, `Parsing/{RutrackerUrlParser,BencodeReader,TorrentMetadata}.cs`
-- `Application`: `Abstractions/*` (порты), `Services/{TorrentService,TorrentScanService,SettingsService,ScanCoordinator}.cs`,
+- `Application`: `Abstractions/*` (порты), `Services/{TorrentService,TorrentScanService,SettingsService,ScanCoordinator,RutrackerSessionService}.cs`,
   `State/ScanStatus.cs`, `Dtos/*`, `Exceptions/AppException.cs`
 - `Infrastructure`: `Persistence/AppDbContext.cs`, `Persistence/Configurations/*`, `Persistence/Migrations/*`,
-  `Rutracker/RutrackerClient.cs`, `Storage/TorrentFileStorage.cs`
+  `Rutracker/RutrackerClient.cs`, `Rutracker/PlaywrightChallengeSolver.cs`, `Security/SecretProtector.cs`,
+  `Qbittorrent/QbittorrentClient.cs`, `Storage/TorrentFileStorage.cs`
 - `Web`: `Program.cs`, `Controllers/{Torrents,Settings,System}Controller.cs`, `Contracts/*`,
   `Middleware/ExceptionHandlingMiddleware.cs`, `wwwroot/*`, `ClientApp/*`
+
+Применение обновлений в qBittorrent: `Application/Services/TorrentApplyService.cs`
+(порт `ITorrentUpdateApplier`), реализация API v2 — `Infrastructure/Qbittorrent/QbittorrentClient.cs`.
 
 ---
 
@@ -129,8 +138,10 @@ SQLite, две таблицы. WAL, `busy_timeout=5000`, `foreign_keys=on`, ми
 
 | Поле | Примечание |
 |---|---|
-| RutrackerCookie | `bb_session=...; bb_data=...` |
-| CookieVerifiedAtUtc / CookieLastError | результат последней проверки |
+| ~~RutrackerCookie~~ → RutrackerLogin | ~~`bb_session=...; bb_data=...`~~ логин рутрекера |
+| RutrackerPasswordProtected | пароль рутрекера, шифротекст Data Protection; в API и журнал не попадает |
+| RutrackerCookie | кэш куки сеанса (`bb_session=...; bb_data=...`), заполняется после входа; ручной fallback |
+| CookieVerifiedAtUtc / CookieLastError | результат последней проверки сеанса или входа |
 | ScanIntervalMinutes | 1…1440 |
 | AutoScanEnabled | вкл/выкл автoскан |
 | RequestDelayMs | пауза между запросами, по умолчанию 1500 |
@@ -153,12 +164,14 @@ SQLite, две таблицы. WAL, `busy_timeout=5000`, `foreign_keys=on`, ми
 | POST | `/api/torrents/{id}/check` | форс-проверка одного, синхронно, результат в ответе |
 | POST | `/api/torrents/check-all` | 202 + `runId`; выполняется в фоне, UI опрашивает статус |
 | GET/PUT | `/api/settings` | настройки; PUT применяется сразу |
-| POST | `/api/settings/test-cookie` | пробное скачивание по первому отслеживаемому топику |
+| POST | `/api/settings/rutracker/login` | войти браузером по сохранённым логину и паролю |
+| POST | `/api/settings/test-cookie` | пробное скачивание по первому отслеживаемому топику (проверка сеанса) |
 | GET | `/api/system/status` | версия, текущий run, последний/следующий запуск, счётчики, состояние куки |
 | GET | `/api/health` | healthcheck для Docker |
 
 Ошибки — RFC 7807 `ProblemDetails`, коды: `RUTRACKER_COOKIE_INVALID`, `RUTRACKER_UNAVAILABLE`,
-`TOPIC_NOT_FOUND`, `INVALID_URL`, `DUPLICATE_TOPIC`, `SCAN_ALREADY_RUNNING`.
+`TOPIC_NOT_FOUND`, `INVALID_URL`, `DUPLICATE_TOPIC`, `SCAN_ALREADY_RUNNING`, а также
+`RUTRACKER_LOGIN_FAILED`, `RUTRACKER_LOGIN_CAPTCHA_REQUIRED`, `RUTRACKER_CREDENTIALS_UNREADABLE`.
 
 ---
 
@@ -202,8 +215,27 @@ while (!ct.IsCancellationRequested)
 Infohash считается локально: SHA-1 по span info-словаря, поэтому «изменилось/нет» — точное
 сравнение хешей, а не байтов файла.
 
-Задел под qBittorrent: порт `ITorrentClient` без реализации; статус `Changed` в UI трактуется как
-«обновление обнаружено, применение не автоматизировано».
+**Вход.** ~~Куку пользователь копирует вручную~~ → в настройках хранятся логин и пароль;
+пароль шифруется ASP.NET Core Data Protection, ключи лежат в `/data/keys` вне БД.
+`RutrackerSessionService` при первом скачивании без кэша куки расшифровывает пароль и просит
+`PlaywrightChallengeSolver.LoginAsync` открыть `login.php`, заполнить `login-form-full`
+(`login_username` / `login_password`) и дождаться `bb_session`. Куки `bb_*` кэшируются
+в `AppSetting.RutrackerCookie`, дальше работает обычный `HttpClient`. После неудачного входа
+10 минут автоматические попытки не повторяются (защита от блокировки аккаунта), кнопка
+«Войти» паузу игнорирует. Смена логина или пароля сбрасывает кэш сеанса.
+
+**Cloudflare.** С 2026-11-20 `dl.php` закрыт managed challenge Cloudflare (`403`,
+`Cf-Mitigated: challenge`). Браузер (Playwright, Chromium с persistent-профилем) используется
+только чтобы получить `cf_clearance` и UA; сама загрузка остаётся на `HttpClient`. Пропуск
+хранится в `AppSetting`, привязан к IP и UA, живёт около года. Headless-Chromium проверку не
+проходит, поэтому в контейнере браузер запускается под Xvfb, а локально открывается окно.
+При повторном челлендже после решения — код `RUTRACKER_CHALLENGE_REQUIRED`, пропуск сбрасывается,
+скан прерывается без пометки куки рутрекера невалидной.
+
+~~Задел под qBittorrent: порт `ITorrentClient` без реализации; статус `Changed` в UI трактуется как
+«обновление обнаружено, применение не автоматизировано».~~
+Применение в qBittorrent реализовано в TW-39 (см. `docs/qbittorrent.md`): `ITorrentClient`
+реализован в Infrastructure, применение — `ITorrentUpdateApplier`/`TorrentApplyService`.
 
 ---
 
@@ -217,7 +249,8 @@ Infohash считается локально: SHA-1 по span info-словар�
 - Экран «Торренты»: форма добавления URL, таблица (название, ссылка на топик, размер,
   «обновлён», «проверен», бейдж статуса/ошибки), «Проверить» / «Проверить все», удаление
   с подтверждением, обратный отсчёт до следующего автоскана, поллинг `/api/system/status` раз в 15 с.
-- Экран «Настройки»: кука, интервал, автоскан, задержка, «Сохранить» (сразу) и «Проверить куку».
+- Экран «Настройки»: ~~кука~~ логин и пароль, статус сеанса, «Войти», «Проверить сеанс»,
+  «Забыть данные», ручная кука в «Дополнительно», интервал, автоскан, задержка.
 - `npm run build` → `../wwwroot`. Dev: Vite проксирует `/api` на `http://localhost:5080`.
 - Kestrel: `UseDefaultFiles` + `UseStaticFiles` (index.html — no-cache, ассеты — immutable),
   `MapControllers`, затем `/api/{**rest}` → 404, затем `MapFallbackToFile("index.html")`
@@ -230,8 +263,9 @@ Infohash считается локально: SHA-1 по span info-словар�
 Multi-stage: `node:24-alpine` (npm ci + build) → `sdk:10.0` (publish с готовым `wwwroot`) →
 `aspnet:10.0-noble`. Non-root, `EXPOSE 8080`, `VOLUME /data`, `HEALTHCHECK` на `/api/health`.
 
-Compose: `8080:8080`, `./data:/data`, `ConnectionStrings__Default=Data Source=/data/torrentwatcher.db`,
-`TZ=Europe/Moscow`, `restart: unless-stopped`.
+Compose: ~~`8080:8080`~~ `${APP_PORT:-8088}:8080` (8080 на хосте занят qBittorrent),
+`./data:/data`, `ConnectionStrings__Default=Data Source=/data/torrentwatcher.db`,
+`Security__KeysDirectory=/data/keys`, `TZ=Europe/Moscow`, `restart: unless-stopped`.
 
 ---
 
@@ -326,17 +360,80 @@ Compose: `8080:8080`, `./data:/data`, `ConnectionStrings__Default=Data Source=/d
 - [x] ~~TW-28. Заметка «как добавить qBittorrent позже»: точка расширения `ITorrentClient`,
       какие данные уже есть. — done 2026-11-17~~
 
-**Итого: ~48 ч.**
+### Этап 10. Cloudflare (14 ч)
+
+- [x] ~~TW-29. `RutrackerClient`: распознавать managed challenge Cloudflare
+      (`Cf-Mitigated: challenge`, HTML-маркеры `cf_chl_opt`/`challenge-platform`) и бросать
+      отдельный вид сбоя `Challenge` с кодом `RUTRACKER_CHALLENGE_REQUIRED`; тесты на 403
+      с заголовком, HTML-челлендж и кастомный UA. — done 2026-11-20~~
+- [x] ~~TW-30. Порт `ICloudflareChallengeSolver` + `PlaywrightChallengeSolver`: Chromium
+      с persistent-профилем в `data/browser`, `--disable-blink-features=AutomationControlled`,
+      без `--enable-automation`, получение `cf_clearance` и UA. Headless проверку не проходит —
+      в контейнере Xvfb. — done 2026-11-20~~
+- [x] ~~TW-31. `CloudflareAwareRutrackerClient` и `CloudflareClearanceService`: кука и UA
+      в `AppSetting`, подстановка в запрос, один автоматический повтор после челленджа,
+      сброс пропуска при повторном отказе, поддержка в `test-cookie`; юнит-тесты. — done 2026-11-20~~
+- [x] ~~TW-32. API/UI: `POST /api/settings/cloudflare/solve`, ручные `cf_clearance` и UA
+      в `PUT /api/settings`, статус и ошибки в настройках, кнопки «Пройти проверку Cloudflare»
+      и «Убрать пропуск». — done 2026-11-20~~
+- [x] ~~TW-33. Docker: Chromium Playwright + Xvfb в образе, профиль в `/data/browser`,
+      `shm_size`, README/.http, запись в журнал плана. — done 2026-11-20~~
+
+### Этап 11. Вход по логину и паролю (7 ч)
+
+- [x] ~~TW-34. Domain/БД: `RutrackerLogin`, `RutrackerPasswordProtected`, `ISecretProtector`
+      + Data Protection (ключи в `/data/keys`), миграция `AddRutrackerCredentials`,
+      `Security:KeysDirectory` в appsettings/Docker/compose; тест шифрования. — done 2026-11-21~~
+- [x] ~~TW-35. Application: `IRutrackerSessionProvider` и `RutrackerSessionService` (кэш куки,
+      автовход, пауза 10 минут после неудачи, коды ошибок); интеграция в `TorrentService`,
+      `TorrentScanService`, `SettingsService`, `CloudflareAwareRutrackerClient`,
+      `ScanCoordinator`; `AsNoTracking` в репозитории настроек. — done 2026-11-21~~
+- [x] ~~TW-36. Infrastructure: `IRutrackerLogin` + вход в `PlaywrightChallengeSolver`
+      (форма `login-form-full`, ожидание Cloudflare, капча, ошибка входа, извлечение `bb_*`),
+      регистрация в DI. — done 2026-11-21~~
+- [x] ~~TW-37. API/UI: логин/пароль в настройках, статусы и кнопки «Войти» / «Проверить сеанс» /
+      «Забыть данные», `POST /api/settings/rutracker/login`, ручная кука в «Дополнительно»,
+      README и `.http`. — done 2026-11-21~~
+- [x] ~~TW-38. Тесты: настройки и вход (unit), API (integration), шифрование; локальный smoke
+      (UI, API, миграция, ключи). — done 2026-11-21~~
+
+### Этап 12. qBittorrent (8 ч)
+
+- [x] ~~TW-39. Интеграция с qBittorrent по API v2: настройки (адрес Web UI, логин, пароль
+      шифруется Data Protection, авто-применение, проверка соединения), `QbittorrentClient`
+      в Infrastructure; `TorrentApplyService` (старая раздача удаляется с `deleteFiles=false`,
+      новая добавляется в ту же папку с категорией и тегами, затем recheck и resume;
+      идемпотентность, повтор при сбое); поля `AppliedInfoHashV1`, `AppliedAtUtc`,
+      `SupersededInfoHashV1`, `ApplyError`; эндпоинты `POST /api/settings/qbittorrent/test`
+      и `POST /api/torrents/{id}/apply`; UI: карточка настроек и бейдж/кнопка в таблице;
+      миграция, тесты, README и `docs/qbittorrent.md`. Готово: при смене infohash раздача
+      в клиенте заменяется, а сбой клиента не делает проверку ошибочной. — done 2026-11-21~~
+
+### Этап 13. Деплой на сервер (3 ч)
+
+- [x] ~~TW-40. Опубликованный порт приложения сменён с 8080 на 8088
+      (`${APP_PORT:-8088}:8080`, `start.bat`, README, docs) — 8080 на хосте остаётся
+      за qBittorrent. Добавлены `deploy_server.bat` (сборка образа → tar → pscp → plink,
+      настройки в `scripts/deploy/server/deploy.local.cfg`), шаблон
+      `scripts/deploy/server/docker-compose.yaml`, `remote-deploy.sh` (compose создаётся
+      один раз, chown `/data` пользователю `app`, фаервол, healthcheck, история тегов,
+      очистка старых образов) и `deploy.local.cfg.example`; `.gitignore` дополнен.
+      Готово: `deploy_server.bat` разворачивает образ на сервере, UI на `:8088`. — done 2026-11-21~~
+
+~~**Итого: ~62 ч.**~~ ~~**Итого: ~69 ч.**~~ ~~**Итого: ~77 ч.**~~ **Итого: ~80 ч.**
 
 ---
 
 ## 11. Definition of Done (проекта)
 
 - `docker compose up -d` на чистой машине поднимает приложение, UI доступен на `/`, API на `/api`.
-- Кука сохраняется через UI и проверяется кнопкой; невалидная кука даёт понятный баннер.
+- Логин и пароль сохраняются через UI; пароль не отдаётся в API, вход выполняется кнопкой
+  и автоматически при первом скачивании; ошибка входа даёт понятный баннер.
 - Торрент добавляется по ссылке на топик и сразу показывает название, размер и infohash.
 - Автоскан идёт с заданным интервалом; смена интервала и куки применяется без перезапуска.
 - Форс-проверка одного и всех работает; при изменении infohash обновляется дата и статус.
+- Обновление применяется в qBittorrent: старая раздача исчезает, новая появляется в той же
+  папке; сбой клиента виден в таблице и не ломает скан.
 - Данные и `.torrent` переживают перезапуск контейнера.
 - `dotnet test` зелёный; сборка без предупреждений.
 
@@ -345,10 +442,20 @@ Compose: `8080:8080`, `./data:/data`, `ConnectionStrings__Default=Data Source=/d
 ## 12. Риски
 
 - **Кука/капча рутрекера** — явный код ошибки, `test-cookie`, баннер; HTML не парсим.
+- **Вход по логину/паролю** — если рутрекер включит капчу на `login.php`, автовход остановится
+  с `RUTRACKER_LOGIN_CAPTCHA_REQUIRED`; останется ручная кука. Потеря `/data/keys` делает
+  сохранённый пароль нечитаемым — его нужно ввести заново. Частые неудачные попытки входа
+  могут привести к блокировке аккаунта, поэтому после первой неудачи пауза 10 минут.
 - **Неверный infohash** — фикстуры реальных торрентов, парсер как чистая функция с покрытием.
+- **qBittorrent недоступен или сменил API** — ошибка пишется в `ApplyError` и не ломает скан;
+  замена повторяется на следующем скане или кнопкой. Старая раздача удаляется только после
+  успешного поиска, файлы не удаляются, поэтому повтор безопасен.
 - **SQLite + bind-mount Docker Desktop** — WAL и `busy_timeout`; при блокировках перейти на named volume.
 - **Нет авторизации** — слушать LAN/localhost, предупреждение в README; кука в БД plaintext.
 - **Пересечение авто- и ручного скана** — `SemaphoreSlim` + `ScanStatus`.
+- **Cloudflare ужесточит проверку** — headless уже не проходит; если перестанет проходить и
+  headed-Chromium, останется ручной `cf_clearance`. Обход может нарушать ToS и привести
+  к блокировке IP, поэтому интервал по умолчанию 60 минут.
 
 ---
 
@@ -503,3 +610,184 @@ Compose: `8080:8080`, `./data:/data`, `ConnectionStrings__Default=Data Source=/d
   `node:24-alpine` в Dockerfile (в образе). Причина: бинарные хэшированные ассеты
   не должны попадать в историю — они дают шумные диффы и конфликты при каждой сборке;
   Docker-сборка и без них самодостаточна.
+- 2026-11-20 — версия 4: добавлен этап 10 (TW-29–TW-33) — обход Cloudflare на `dl.php`.
+  Причина: рутрекер включил managed challenge (`403`, `Cf-Mitigated: challenge`) на скачивание
+  вложений, прежний `HttpClient` с кукой рутрекера получает страницу проверки.
+  Проверено экспериментально: headless-Chromium (в том числе с `--disable-blink-features=
+  AutomationControlled` и без `--enable-automation`) челлендж не проходит; headed-Chromium
+  проходит; выданный `cf_clearance` работает с обычным `curl`/`HttpClient` при совпадении
+  IP и User-Agent. Поэтому браузер используется только как «солвер», а загрузка остаётся
+  на `HttpClient`. Срок жизни `cf_clearance` в проверке — около года.
+  ~~Капча не обходится, HTML не парсим~~ → капча Cloudflare обходится браузером; HTML
+  по-прежнему не парсим.
+- 2026-11-20 — TW-29: 403 от Cloudflare больше не считается невалидной кукой. Добавлены
+  `RutrackerFailureKind.Challenge`, код `RUTRACKER_CHALLENGE_REQUIRED` (HTTP 502) и
+  распознавание челленджа по заголовку и по HTML-маркерам (Cloudflare умеет отдавать
+  интерстишл с кодом 200). Причина: иначе UI требовал менять исправную куку.
+- 2026-11-20 — TW-30/TW-31: добавлены порты `ICloudflareChallengeSolver`,
+  `ICloudflareClearanceProvider`, `IRutrackerHttpClient`; `RutrackerClient` стал чистым
+  транспортом, обёртка `CloudflareAwareRutrackerClient` подставляет пропуск и один раз
+  повторяет запрос после решения. Пропуск и UA хранятся в `AppSetting` (миграция
+  `AddCloudflareClearance`), в журнал пишется только срок действия. Причина: держать
+  Playwright вне загрузки `.torrent` — дешевле по памяти и проще тестировать.
+- 2026-11-20 — TW-32: в настройках появились ручные `cf_clearance` и User-Agent (аварийный
+  режим и случай, когда браузер в контейнере недоступен), кнопка решения челленджа и статус.
+  Смена UA без нового пропуска сбрасывает старый: Cloudflare привязывает clearance к UA.
+- 2026-11-20 — TW-33: образ ставит Chromium через `dotnet Microsoft.Playwright.dll install
+  --with-deps chromium` и запускается под `xvfb-run`; профиль браузера — `/data/browser`,
+  в compose добавлен `shm_size: 1gb`. Причина: headless не проходит проверку, а `--with-deps`
+  сам ставит системные библиотеки. Docker-сборка в этом окружении не проверялась
+  (демон Docker не запущен) — проверить при первом `docker compose up --build`.
+- 2026-11-21 — проверка Docker доведена до конца. Сборка и запуск прошли, но всплыли
+  четыре проблемы, все исправлены:
+  1. `dotnet Microsoft.Playwright.dll install` не запускается без
+     `Microsoft.Playwright.runtimeconfig.json` рядом с DLL — файл создаётся на время установки
+     и удаляется.
+  2. Встроенному Node из Playwright не хватает `libatomic.so.1` — в apt-слой добавлен
+     `libatomic1`, иначе `--with-deps` не стартует (курица и яйцо).
+  3. `xvfb-run` как PID 1 зависает на ожидании SIGUSR1 от Xvfb, а при перезапуске контейнера
+     остаются `/tmp/.X99-lock` и сокет. Вместо `xvfb-run` — свой
+     `docker-entrypoint.sh`: чистит lock/сокет, поднимает `Xvfb :99` и делает `exec dotnet`.
+  4. **Главное:** предположение «clearance работает с обычным `HttpClient`» в Linux-контейнере
+     не подтвердилось. С валидным `cf_clearance` и тем же UA `index.php` отдаёт 200, а
+     `dl.php`/`viewforum.php` — `403 Cf-Mitigated: challenge` и для `HttpClient`, и для `curl`;
+     headed-Chromium с теми же куками скачивает `.torrent` (проверено на реальных топиках).
+     Значит, Cloudflare проверяет ещё и браузерный отпечаток, а не только IP+UA.
+     ~~Браузер используется только как «солвер», загрузка всегда на `HttpClient`~~ →
+     добавлен порт `IBrowserTorrentDownloader` и fallback: `HttpClient` → решение челленджа →
+     повтор → скачивание Chromium. Флаг `CloudflareTransportState` (singleton) после первого
+     успешного браузерного скачивания переключает процесс на браузер, чтобы не тратить 403
+     на каждый скан. Кука рутрекера кладётся в контекст Chromium (иначе `dl.php` отвечает
+     `attachment data not found`); профиль и так лежит в `/data`.
+  Проверено в контейнере: образ 1.57 ГБ, healthcheck healthy, добавление реального топика
+  `6442751` (infohash `a024b8…`, 1.5 ГБ, 1 файл), первый `check` — 3.0 с, повторный — 0.26 с,
+  `test-cookie` — 0.29 с; после `docker compose restart` данные, профиль и сканирование
+  сохранились. Добавлен `start.bat` (проверка Docker, сборка, ожидание health, открытие UI).
+- 2026-11-21 — версия 6: ~~ручная кука рутрекера в настройках~~ → логин и пароль.
+  Причина: браузер всё равно поднимается для Cloudflare, поэтому вход по учётным данным
+  не добавляет отдельного механизма, а копировать куку вручную больше не нужно.
+  Пароль шифруется ASP.NET Core Data Protection, ключи — `/data/keys` (вне БД);
+  `RutrackerPasswordProtected` в API и журнал не попадает. Кэш куки сеанса по-прежнему
+  хранится в `AppSetting.RutrackerCookie` (plaintext, как и раньше): после входа им
+  пользуется обычный `HttpClient`, браузер на каждый запрос не запускается. Смена логина
+  или пароля сбрасывает кэш и подтверждение сеанса. После неудачного входа 10 минут
+  автоматические попытки не повторяются, чтобы не блокировать аккаунт; кнопка «Войти»
+  паузу игнорирует. Перед входом из профиля Chromium удаляются только куки `bb_*`
+  (чтобы смена аккаунта не вернула старый сеанс), `cf_clearance` и `__cf_bm` сохраняются.
+  Ручная кука оставлена в «Дополнительно» как аварийный путь.
+  Добавлены коды `RUTRACKER_LOGIN_FAILED` (401), `RUTRACKER_LOGIN_CAPTCHA_REQUIRED` (409),
+  `RUTRACKER_CREDENTIALS_UNREADABLE` (409).
+  Проверено: `dotnet test` — 198 unit + 28 integration; локальный запуск — миграция
+  `AddRutrackerCredentials`, создание ключей, сохранение логина/пароля через API без выдачи
+  пароля, UI настроек без ошибок консоли. Форма входа проверена в реальном Chromium:
+  `login.php` содержит `login-form-full` с `login_username`/`login_password`, капчи
+  в форме сейчас нет. Успешный вход с настоящими учётными данными не выполнялся
+  (их нет в окружении) — проверить при первом реальном использовании; ошибки входа
+  и капча обрабатываются отдельными кодами.
+- 2026-11-21 — TW-36 (исправление): вход падал с `System.TimeoutException` из
+  `TryReadLoginErrorAsync` (HTTP 500 `INTERNAL_ERROR`), хотя страница входа уже ушла на index.
+  Причина: с Playwright 1.44 таймаут бросает отдельный `TimeoutException`, а не
+  `PlaywrightException`; проба `#login-form-full` в цикле шла с дефолтным таймаутом 30 с
+  и блокировала опрос, поэтому `bb_session`, появившаяся на следующей странице, не читалась
+  (в профиле Chromium после сбоя кука осталась). Стало: все пробы состояния страницы ждут
+  не больше 2 с (`ProbeTimeoutMs`) и ловят оба вида исключений, текст ошибки формы читается
+  только когда форма видна, для контекста задан общий таймаут 15 с, а закрытие страницы
+  не маскирует результат операции.
+  Попутно нашлись ещё три причины того, что вход «не завершался»:
+  `~~context.ClearCookiesAsync(new BrowserContextClearCookiesOptions { Name = "^bb_" })~~`
+  → `NameRegex = new Regex("^bb_")`: `Name` сравнивается с именем куки точно, поэтому
+  старый сеанс не удалялся и `login.php` уводил на index; `~~CookiesAsync([BaseUrl, ForumUrl])~~`
+  → адреса с завершающим слешем (`CookieUrls`): `bb_*` ставятся с путём `/forum/`, и без
+  слеша фильтр Playwright их не видел; бюджет входа увеличен до
+  `SolveTimeout + 30 с`, потому что Cloudflare может задержать и навигацию, и POST.
+  Добавлено: если формы так и нет, но `bb_*` уже есть, вход считается выполненным;
+  при неудаче в журнал пишется состояние страницы (url, title, челлендж, куки по именам,
+  разметка кнопки). Ещё одна причина того же сообщения — брошенный `SingletonLock`
+  в профиле Chromium после перезапуска контейнера: Chromium пишет «profile appears to be
+  in use», не может показать диалог и падает с кодом 21. Теперь `LaunchContextAsync`
+  при таком отказе снимает `SingletonLock`/`SingletonCookie`/`SingletonSocket`/`lockfile`
+  и повторяет запуск один раз.
+  Проверено: `dotnet test` (198 + 29), реальный вход `eric-1` через
+  API занял 2 с, затем `test-cookie` и `check-all` (топик 6442751) отработали без ошибок.
+- 2026-11-21 — TW-35 (исправление): `test-cookie` падал с
+  «another instance with the same key value for {'Id'} is already being tracked», если
+  в одном запросе настройки читались дважды (например, сохранение пропуска Cloudflare
+  после решения челленджа). Причина: `AppSettingsRepository.FindAsync` работает
+  `AsNoTracking`, а `SaveAsync` делал `Update` для второго отсоединённого экземпляра,
+  пока первый ещё отслеживался. Стало: `SaveAsync` отсоединяет прежний экземпляр с тем же
+  ключом и только потом присоединяет новый. Тест —
+  `SqlitePersistenceTests.Settings_TwoSavesInOneContext_DoNotConflict`.
+- 2026-11-21 — исправление гонки записи настроек: `POST /api/torrents` иногда отвечал 401
+  сразу после `PUT /api/settings` с кукой. Причина: строку настроек меняют несколько
+  писателей (экран настроек, планировщик, сеанс рутрекера, пропуск Cloudflare), и все
+  делают read-modify-write; скан, завершившийся между запросом и сохранением куки,
+  записывал устаревший снимок и стирал её. Стало: singleton `SettingsWriteGate`
+  (`SemaphoreSlim`) в Application; `SettingsService`, `CloudflareClearanceService`
+  и `RutrackerSessionService` берут его вокруг чтения и записи настроек, а сетевые
+  вызовы и вход в браузер остаются вне блокировки. Интеграционные тесты перестали
+  падать с 401 (5 прогонов подряд). Причина именно гонки, а не нового кода, подтверждена
+  нестабильностью до правки: один и тот же тест проходил и падал от прогона к прогону.
+- 2026-11-21 — Dockerfile: `COPY` опубликованного приложения перенесён после установки
+  Chromium, а в слой установки копируются только `Microsoft.Playwright.dll` и каталог
+  `.playwright` с драйвером (CLI без него пишет «missing required assets»). Причина:
+  раньше любое изменение кода сбрасывало слой с `playwright install --with-deps chromium`
+  и каждая пересборка заново скачивала ~325 МБ браузеров; теперь браузеры ставятся
+  один раз и переустанавливаются только при смене версии Playwright.
+- 2026-11-21 — версия 7: добавлен этап 12 (TW-39) — интеграция с qBittorrent.
+  Причина: заказчик попросил автоматически обновлять раздачи в qBittorrent, запущенном
+  на том же сервере. Решение: API v2 Web UI; при смене infohash старая раздача удаляется
+  с `deleteFiles=false`, новая добавляется в ту же папку с категорией и тегами, затем
+  recheck и resume. Пароль шифруется Data Protection; авто-применение можно выключить,
+  тогда работает кнопка «Применить». Сбой клиента не делает проверку ошибочной.
+  Добавлены коды `QBITTORRENT_NOT_CONFIGURED` (409), `QBITTORRENT_AUTH_FAILED` (409),
+  `QBITTORRENT_UNAVAILABLE` (502), поля `AppliedInfoHashV1`/`AppliedAtUtc`/
+  `SupersededInfoHashV1`/`ApplyError` и миграция `AddQbittorrentIntegration`.
+  Проверено: `dotnet test` — 222 unit + 31 integration, `npm run build` зелёный.
+  Реальное подключение к qBittorrent из этого окружения не выполнялось (нет доступа
+  к `plex.local`) — проверить при первом запуске; в README описаны сеть контейнера,
+  `Host header validation` и конфликт порта 8080.
+- 2026-11-21 — версия 8: добавлен этап 13 (TW-40) — публикация на сервере и смена порта.
+  Причина: на сервере порт 8080 занят qBittorrent; приложение теперь публикуется на 8088
+  (`APP_PORT`, внутри контейнера по-прежнему 8080). Добавлен `deploy_server.bat` по образцу
+  `C:\Work\ProxyTunnel\deploy_server.bat`: сборка образа, `docker save`, копирование tar,
+  compose и `remote-deploy.sh` через `pscp`, развёртывание через `plink`. На сервере
+  compose создаётся один раз в `/torrentwatcher`, права на `data` выставляются пользователю
+  `app`, открывается порт в ufw/firewalld, проверяется healthcheck, хранятся теги для
+  rollback. Проверено локально: сборка, `dotnet test` (222 + 31), `npm run build`;
+  реальный деплой на сервер из этого окружения не выполнялся — проверить при первом запуске.
+- 2026-11-21 — TW-40 (уточнение): деплой под непривилегированной УЗ. Причина: на сервере
+  нет пароля root, публиковать нужно под учёткой из sudoers. `deploy_server.bat` теперь
+  спрашивает SSH-пользователя (по умолчанию root) и пароль sudo (пусто — NOPASSWD);
+  пароль передаётся на сервер через stdin, в файл и журнал не пишется. `remote-deploy.sh`
+  принимает режим `nopass`/`stdin`, использует `sudo -n`/`sudo -S`, а при отсутствии sudo
+  может работать от группы `docker` с `INSTALL_DIR` в домашнем каталоге; каталоги
+  установки и `state` передаются деплоящему пользователю, `data` — пользователю `app`.
+  Проверено: `bash -n`, полный прогон `deploy_server.bat` с заглушками для режимов
+  root / nopass / пароль sudo.
+- 2026-11-21 — TW-40 (уточнение 2): ускорение передачи образа. Причина: 1,74 ГБ tar
+  по SSH в локальной сети шёл со скоростью ~2–2,5 МБ/с (~12 минут). `pscp` теперь
+  запускается с `-C` (zlib-сжатие потока; tar с Chromium и .NET ужимается примерно
+  в 2–2,5 раза), отключается `PSCP_COMPRESS=0`; в README добавлена диагностика
+  (линк, Wi-Fi, CPU) и упоминание возможной сборки на сервере. Сжатие tar в отдельный
+  `.tar.gz` пробовал, но `docker load` не читает gzip, а `tar -czf` оборачивает tar
+  во внешний архив — поэтому выбран потоковый `-C`.
+- 2026-11-21 — TW-40 (исправление): первый реальный деплой под `eric` упал на двух местах.
+  1) `chown` в контейнере выполнялся от `USER app` и получал `Operation not permitted` —
+     добавлен `--user root` для одноразового контейнера, меняющего владельца `data`.
+  2) `docker compose -f` на сервере дал `unknown shorthand flag: 'f' in -f`: плагин
+     compose не подхватился. Скрипт теперь проверяет `docker compose version`, затем
+     `docker-compose`, и только потом падает с подсказкой об установке; порт передаётся
+     через `.env` рядом с compose, чтобы не зависеть от `env`/sudoers.
+  Заодно подтвердилось ускорение передачи: с `pscp -C` скорость выросла с ~2,5 до
+  ~10,9 МБ/с на том же канале.
+- 2026-11-21 — TW-40 (исправление 2): пароль sudo и код возврата.
+  1) SSH-сервер печатает «Access granted. Press Return to begin session.» и съедал
+     первую строку stdin, поэтому переданный через поток пароль не доходил до скрипта.
+     Теперь `deploy_server.bat` кладёт пароль в локальный временный файл, отправляет
+     его `pscp` рядом с остальными файлами, а `remote-deploy.sh` читает его, сразу
+     ставит права `600` и удаляет; stdin больше не используется.
+  2) `goto` сбрасывал ERRORLEVEL, и при провале удалённого скрипта батник печатал
+     «Готово». Код возврата `plink` теперь записывается сразу после вызова: ошибка
+     деплоя завершает батник с кодом 1 и не показывает успех.
+  Проверено с заглушками: успешный прогон (пароль передаётся файлом) и провал
+  удалённой команды (код 7) — батник пишет ошибку, локальный файл пароля удаляется.

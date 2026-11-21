@@ -5,12 +5,19 @@ services:
       dockerfile: Dockerfile
     image: torrentwatcher:latest
     restart: unless-stopped
+    # Chromium активно использует /dev/shm; дефолтных 64 МБ мало.
+    shm_size: "1gb"
     ports:
-      - "8080:8080"
+      # Наружу — 8088: на хосте 8080 обычно занят qBittorrent.
+      - "${APP_PORT:-8088}:8080"
     environment:
       TZ: Europe/Moscow
       ConnectionStrings__Default: "Data Source=/data/torrentwatcher.db"
       Storage__TorrentsDirectory: "/data/torrents"
+      Security__KeysDirectory: "/data/keys"
+      Rutracker__Browser__ProfileDirectory: "/data/browser"
+      Rutracker__Browser__Headless: "false"
+      Rutracker__Browser__DisableSandbox: "true"
     volumes:
       - ./data:/data
     healthcheck:

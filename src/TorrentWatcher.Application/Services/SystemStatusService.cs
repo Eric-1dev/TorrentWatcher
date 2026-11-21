@@ -49,7 +49,7 @@ public sealed class SystemStatusService
             ScanIntervalMinutes: settings.ScanIntervalMinutes,
             TorrentCount: torrents.TotalCount,
             UpdateAvailableCount: torrents.UpdateAvailableCount,
-            CookieConfigured: settings.HasCookie,
+            CookieConfigured: settings.HasCredentials || settings.HasCookie,
             CookieVerifiedAtUtc: settings.CookieVerifiedAtUtc,
             CookieLastError: settings.CookieLastError);
     }

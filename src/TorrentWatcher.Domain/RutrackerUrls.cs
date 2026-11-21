@@ -9,6 +9,9 @@ public static class RutrackerUrls
 
     public const string ForumUrl = BaseUrl + "/forum";
 
+    /// <summary>Страница входа в аккаунт.</summary>
+    public static string Login => ForumUrl + "/login.php";
+
     /// <summary>Ссылка на топик для показа пользователю.</summary>
     public static string Topic(int topicId) => $"{ForumUrl}/viewtopic.php?t={topicId}";
 

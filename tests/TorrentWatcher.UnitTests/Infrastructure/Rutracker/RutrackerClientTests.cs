@@ -87,6 +87,59 @@ public sealed class RutrackerClientTests
     }
 
     [Fact]
+    public async Task CloudflareChallengeHeader_ThrowsChallengeInsteadOfCookieInvalid()
+    {
+        var handler = new StubHttpMessageHandler((_, _) =>
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.Forbidden);
+            response.Headers.TryAddWithoutValidation("Cf-Mitigated", "challenge");
+            return Task.FromResult(response);
+        });
+
+        RutrackerException exception = await Assert.ThrowsAsync<RutrackerException>(
+            () => CreateClient(handler).DownloadTorrentAsync(Request(), CancellationToken.None));
+
+        Assert.Equal(RutrackerFailureKind.Challenge, exception.Kind);
+        Assert.Equal(ErrorCodes.RutrackerChallengeRequired, exception.Code);
+    }
+
+    [Fact]
+    public async Task CloudflareChallengeHtml_ThrowsChallenge()
+    {
+        var handler = ContentHandler(
+            "<html><script>window._cf_chl_opt = { ray: 'x' };</script>"
+            + "<script src=\"/cdn-cgi/challenge-platform/h/b/orchestrate\"></script></html>",
+            "text/html");
+
+        RutrackerException exception = await Assert.ThrowsAsync<RutrackerException>(
+            () => CreateClient(handler).DownloadTorrentAsync(Request(), CancellationToken.None));
+
+        Assert.Equal(RutrackerFailureKind.Challenge, exception.Kind);
+    }
+
+    [Fact]
+    public async Task CustomUserAgent_IsSentVerbatim()
+    {
+        (byte[] torrent, _) = TorrentFixtures.SingleFile();
+        HttpRequestMessage? captured = null;
+
+        var handler = new StubHttpMessageHandler((request, _) =>
+        {
+            captured = request;
+            return Task.FromResult(Ok(torrent));
+        });
+
+        await CreateClient(handler).DownloadTorrentAsync(
+            Request() with { UserAgent = "Mozilla/5.0 (X11; Linux x86_64) Chrome/159.0.0.0" },
+            CancellationToken.None);
+
+        HttpRequestMessage sent = Assert.IsType<HttpRequestMessage>(captured);
+        Assert.Equal(
+            "Mozilla/5.0 (X11; Linux x86_64) Chrome/159.0.0.0",
+            sent.Headers.UserAgent.ToString());
+    }
+
+    [Fact]
     public async Task NotFound_ThrowsTopicNotFound()
     {
         var handler = StatusHandler(HttpStatusCode.NotFound);

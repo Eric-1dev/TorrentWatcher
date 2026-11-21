@@ -179,6 +179,18 @@ if [ "${NEEDS_CHOWN}" -eq 1 ]; then
 		|| warn "не удалось сменить владельца ${COMPOSE_FILE}"
 fi
 
+# docker-compose v1 без ключа version разбирает файл как старый формат и
+# может проигнорировать volumes. Добавляем ключ, если его ещё нет.
+if ! grep -qE '^[[:space:]]*version[[:space:]]*:' "${COMPOSE_FILE}"; then
+	echo "[deploy] Добавляю version: \"2.4\" в ${COMPOSE_FILE} для совместимости с compose v1."
+	tmp_compose="${COMPOSE_FILE}.tmp"
+	{
+		printf 'version: "2.4"\n'
+		cat "${COMPOSE_FILE}"
+	} > "${tmp_compose}"
+	mv "${tmp_compose}" "${COMPOSE_FILE}"
+fi
+
 # ---------- Права на data ----------
 # Контейнер работает под непривилегированным пользователем app: bind-mount,
 # созданный root'ом, ему недоступен. Меняем владельца через тот же образ,
@@ -225,11 +237,19 @@ echo "[deploy] ${COMPOSE_BIN[*]} up -d --force-recreate (тег ${NEW_TAG}, по
 as_root "${COMPOSE_BIN[@]}" -f "${COMPOSE_FILE}" up -d --force-recreate
 
 # ---------- Проверка монтирования /data ----------
-MOUNTS="$(as_root docker inspect -f '{{json .Mounts}}' "${CONTAINER_NAME}" 2>/dev/null || echo '[]')"
-if ! printf '%s' "${MOUNTS}" | grep -q '"Destination":"/data"'; then
+# Проверяем по списку Destination, не разбирая JSON: форматирование вывода
+# docker inspect отличается между версиями.
+MOUNTS="$(as_root docker inspect -f '{{range .Mounts}}{{.Destination}} {{end}}' "${CONTAINER_NAME}" 2>&1 || true)"
+if ! printf '%s' "${MOUNTS}" | grep -qE '(^| )/data( |$)'; then
 	echo "[deploy][ERROR] Контейнер запущен без монтирования /data (${DATA_DIR})." >&2
+	echo "         Точки монтирования: ${MOUNTS:-<нет вывода>}" >&2
+	echo "         Binds: $(as_root docker inspect -f '{{json .HostConfig.Binds}}' "${CONTAINER_NAME}" 2>/dev/null || echo '?')" >&2
 	echo "         Данные на хосте не видны приложению. Проверьте volume в ${COMPOSE_FILE}:" >&2
 	echo "           - ./data:/data" >&2
+	echo "         Что видит compose:" >&2
+	as_root "${COMPOSE_BIN[@]}" -f "${COMPOSE_FILE}" config 2>&1 | sed -n '1,80p' >&2 || true
+	# Не оставляем работать контейнер с эфемерным /data: данные пропали бы.
+	as_root docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
 	exit 1
 fi
 

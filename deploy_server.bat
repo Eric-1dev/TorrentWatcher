@@ -78,10 +78,11 @@ if "!SSH_AUTH!"=="" (
 set "SSH_TARGET=%SSH_USER%@%SSH_HOST%"
 
 REM Пароль sudo нужен, только если входим не под root и на сервере нет NOPASSWD.
-set "SUDO_PW="
+REM SUDO_PW можно задать заранее в окружении — тогда запрос не появится.
 set "SUDO_MODE=nopass"
-if /i not "!SSH_USER!"=="root" (
-  set /p "SUDO_PW=Пароль sudo для !SSH_USER! (пусто — если настроен NOPASSWD): "
+if /i not "!SSH_USER!"=="root" if not defined SUDO_PW (
+  set /p "SUDO_PW=Пароль sudo для !SSH_USER! (Enter — если настроен NOPASSWD): "
+  if not defined SUDO_PW echo [ВНИМАНИЕ] Пароль sudo не введён: проверяю NOPASSWD.
 )
 if defined SUDO_PW (
   set "SUDO_MODE=file"
@@ -117,6 +118,7 @@ echo   Версия  : %BUILD_ID%
 echo   Сервер  : %SSH_TARGET%
 echo   Каталог : %INSTALL_DIR%
 echo   Порт    : %APP_PORT%
+echo   Sudo    : %SUDO_MODE%
 echo ================================================
 echo.
 

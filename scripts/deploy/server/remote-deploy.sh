@@ -73,16 +73,15 @@ if [ "${DEPLOY_UID}" -eq 0 ]; then
 	as_root() { "$@"; }
 	refresh_sudo() { :; }
 elif [ -n "${SUDO_PASSWORD}" ]; then
-	# Пароль вводим один раз (sudo -v), дальше работаем через sudo -n: так stdin
-	# остаётся свободным для потока образа `gzip -dc | docker load`.
-	if ! printf '%s\n' "${SUDO_PASSWORD}" | sudo -S -p '' -v 2>/dev/null; then
+	# Пароль подаём в sudo -S на каждый вызов: не зависим от таймстампа sudo
+	# (на сервере он может истечь посреди длинной загрузки образа). stdin при
+	# этом не нужен ни одной из команд.
+	if ! printf '%s\n' "${SUDO_PASSWORD}" | sudo -S -p '' true 2>/dev/null; then
 		echo "[deploy][ERROR] Пароль sudo не подошёл для $(id -un)." >&2
 		exit 1
 	fi
-	as_root() { sudo -n "$@"; }
-	refresh_sudo() {
-		printf '%s\n' "${SUDO_PASSWORD}" | sudo -S -p '' -v 2>/dev/null || true
-	}
+	as_root() { printf '%s\n' "${SUDO_PASSWORD}" | sudo -S -p '' "$@"; }
+	refresh_sudo() { :; }
 	NEEDS_CHOWN=1
 elif command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
 	as_root() { sudo -n "$@"; }

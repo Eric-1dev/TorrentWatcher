@@ -45,6 +45,14 @@ public sealed class PlaywrightChallengeSolver
 
     private IPlaywright? _playwright;
     private IBrowserContext? _context;
+
+    /// <summary>
+    /// Одна страница на все операции: новый таб — это новый renderer-процесс, а на слабом
+    /// сервере запуск/остановка процессов на каждый торрент заметны. Операции и так
+    /// сериализованы <see cref="_gate"/>, поэтому страницу можно переиспользовать.
+    /// </summary>
+    private IPage? _page;
+
     private bool _disposed;
 
     public PlaywrightChallengeSolver(
@@ -67,7 +75,7 @@ public sealed class PlaywrightChallengeSolver
         try
         {
             IBrowserContext context = await GetContextAsync(cancellationToken).ConfigureAwait(false);
-            IPage page = await context.NewPageAsync().ConfigureAwait(false);
+            IPage page = await GetPageAsync(context).ConfigureAwait(false);
 
             try
             {
@@ -147,9 +155,11 @@ public sealed class PlaywrightChallengeSolver
                     $"Cloudflare не пропустил браузер за {_options.SolveTimeout.TotalSeconds:0} с. "
                     + "Проверьте сеть и повторите позже.");
             }
-            finally
+            catch (Exception exception) when (IsPlaywrightFailure(exception))
             {
-                await CloseQuietlyAsync(page).ConfigureAwait(false);
+                // Сбой мог уронить renderer: следующая операция начнёт со свежей страницы.
+                await ResetPageAsync().ConfigureAwait(false);
+                throw;
             }
         }
         catch (Exception exception) when (IsPlaywrightFailure(exception))
@@ -196,7 +206,7 @@ public sealed class PlaywrightChallengeSolver
                     })
                 .ConfigureAwait(false);
 
-            IPage page = await context.NewPageAsync().ConfigureAwait(false);
+            IPage page = await GetPageAsync(context).ConfigureAwait(false);
 
             try
             {
@@ -381,7 +391,9 @@ public sealed class PlaywrightChallengeSolver
             }
             finally
             {
-                await CloseQuietlyAsync(page).ConfigureAwait(false);
+                // После входа страницу закрываем: в форме остались логин и пароль,
+                // и держать их в памяти живого документа незачем.
+                await ResetPageAsync().ConfigureAwait(false);
             }
         }
         catch (Exception exception) when (IsPlaywrightFailure(exception))
@@ -422,7 +434,7 @@ public sealed class PlaywrightChallengeSolver
             IBrowserContext context = await GetContextAsync(cancellationToken).ConfigureAwait(false);
             await AddRutrackerCookiesAsync(context, rutrackerCookie).ConfigureAwait(false);
 
-            IPage page = await context.NewPageAsync().ConfigureAwait(false);
+            IPage page = await GetPageAsync(context).ConfigureAwait(false);
 
             try
             {
@@ -493,9 +505,11 @@ public sealed class PlaywrightChallengeSolver
 
                 return new BrowserTorrentDownloadResult(payload, clearance);
             }
-            finally
+            catch (Exception exception) when (IsPlaywrightFailure(exception))
             {
-                await CloseQuietlyAsync(page).ConfigureAwait(false);
+                // Сбой мог уронить renderer: следующая операция начнёт со свежей страницы.
+                await ResetPageAsync().ConfigureAwait(false);
+                throw;
             }
         }
         catch (Exception exception) when (IsPlaywrightFailure(exception))
@@ -523,6 +537,8 @@ public sealed class PlaywrightChallengeSolver
 
         _disposed = true;
 
+        await ResetPageAsync().ConfigureAwait(false);
+
         if (_context is not null)
         {
             await _context.CloseAsync().ConfigureAwait(false);
@@ -532,6 +548,33 @@ public sealed class PlaywrightChallengeSolver
         _playwright?.Dispose();
         _playwright = null;
         _gate.Dispose();
+    }
+
+    /// <summary>
+    /// Возвращает переиспользуемую страницу. Если прошлая закрылась (например, Chromium
+    /// перезапустил renderer после сбоя), создаётся новая.
+    /// </summary>
+    private async Task<IPage> GetPageAsync(IBrowserContext context)
+    {
+        if (_page is not null && !_page.IsClosed)
+        {
+            return _page;
+        }
+
+        _page = await context.NewPageAsync().ConfigureAwait(false);
+        return _page;
+    }
+
+    /// <summary>Закрывает переиспользуемую страницу; следующая операция создаст новую.</summary>
+    private async Task ResetPageAsync()
+    {
+        IPage? page = _page;
+        _page = null;
+
+        if (page is not null)
+        {
+            await CloseQuietlyAsync(page).ConfigureAwait(false);
+        }
     }
 
     private async Task<IBrowserContext> GetContextAsync(CancellationToken cancellationToken)
@@ -653,6 +696,24 @@ public sealed class PlaywrightChallengeSolver
             "--no-default-browser-check",
             "--disable-dev-shm-usage",
             "--lang=ru-RU",
+
+            // Экономия CPU/памяти на слабом сервере: без GPU-процесса, фоновых сервисов
+            // и лишних процессов; V8-heap и дисковый кэш ограничены. Проверено:
+            // managed challenge Cloudflare с этими флагами по-прежнему проходит.
+            "--disable-gpu",
+            "--disable-extensions",
+            "--disable-default-apps",
+            "--disable-background-networking",
+            "--disable-component-update",
+            "--disable-sync",
+            "--disable-translate",
+            "--disable-breakpad",
+            "--mute-audio",
+            "--renderer-process-limit=1",
+            "--disk-cache-size=67108864",
+            "--media-cache-size=1048576",
+            "--js-flags=--max-old-space-size=256",
+            "--disable-features=Translate,BackForwardCache,AcceptCHFrame,MediaRouter,OptimizationHints",
         };
 
         if (_options.DisableSandbox)

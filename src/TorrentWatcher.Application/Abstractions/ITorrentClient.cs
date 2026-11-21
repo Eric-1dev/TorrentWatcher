@@ -20,6 +20,15 @@ public interface ITorrentClient
     /// </summary>
     Task<TorrentClientTorrent?> FindAsync(string infoHash, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Ищет раздачи с указанным названием из info-словаря. Нужно, когда infohash прежней
+    /// версии неизвестен: торрент добавлен в клиент вручную или рутрекер перезалил раздачу
+    /// под новым хешем.
+    /// </summary>
+    Task<IReadOnlyList<TorrentClientTorrent>> FindByNameAsync(
+        string name,
+        CancellationToken cancellationToken);
+
     /// <summary>Добавляет .torrent в клиент.</summary>
     Task AddTorrentAsync(TorrentClientAddRequest request, CancellationToken cancellationToken);
 

@@ -79,6 +79,42 @@ public sealed class QbittorrentClientTests
     }
 
     [Fact]
+    public async Task FindByNameAsync_ReturnsOnlyTorrentsWithSameName()
+    {
+        string? query = null;
+
+        var handler = new StubHttpMessageHandler((request, _) =>
+        {
+            string path = request.RequestUri!.AbsolutePath;
+
+            if (path.EndsWith("auth/login", StringComparison.Ordinal))
+            {
+                return Task.FromResult(LoginOk());
+            }
+
+            query = request.RequestUri.Query;
+
+            return Task.FromResult(Json(
+                """
+                [{"hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","name":"Раздача",
+                  "save_path":"/downloads/Раздача","category":"movies","tags":"tag1","state":"uploading"},
+                 {"hash":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","name":"Другая раздача",
+                  "save_path":"/downloads/Другая","category":"","tags":"","state":"stalledUP"},
+                 {"hash":"cccccccccccccccccccccccccccccccccccccccc","name":"раздача",
+                  "save_path":"/downloads/Раздача","category":"","tags":"","state":"uploading"}]
+                """));
+        });
+
+        IReadOnlyList<TorrentClientTorrent> torrents = await CreateClient(handler)
+            .FindByNameAsync("Раздача", CancellationToken.None);
+
+        Assert.Empty(query ?? string.Empty);
+        Assert.Equal(2, torrents.Count);
+        Assert.All(torrents, torrent => Assert.Equal("Раздача", torrent.Name, ignoreCase: true));
+        Assert.Contains(torrents, torrent => torrent.Category == "movies");
+    }
+
+    [Fact]
     public async Task GetVersionAsync_RejectedLogin_ThrowsAuthFailed()
     {
         var handler = new StubHttpMessageHandler((_, _) =>

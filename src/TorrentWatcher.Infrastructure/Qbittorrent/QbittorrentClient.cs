@@ -60,32 +60,30 @@ public sealed class QbittorrentClient : ITorrentClient
             connection,
             cancellationToken);
 
-        List<TorrentInfoDto>? torrents;
-        try
-        {
-            torrents = JsonSerializer.Deserialize<List<TorrentInfoDto>>(response.Body);
-        }
-        catch (JsonException exception)
-        {
-            throw new AppException(
-                ErrorCodes.QbittorrentUnavailable,
-                "qBittorrent вернул неожиданный ответ вместо списка раздач.",
-                exception);
-        }
+        TorrentInfoDto? torrent = ReadTorrentList(response.Body).FirstOrDefault();
+        return torrent is null ? null : ToTorrentClientTorrent(torrent, infoHash);
+    }
 
-        TorrentInfoDto? torrent = torrents?.FirstOrDefault();
-        if (torrent is null)
-        {
-            return null;
-        }
+    public async Task<IReadOnlyList<TorrentClientTorrent>> FindByNameAsync(
+        string name,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
 
-        return new TorrentClientTorrent(
-            torrent.Hash ?? infoHash,
-            torrent.Name ?? string.Empty,
-            torrent.SavePath ?? string.Empty,
-            torrent.Category ?? string.Empty,
-            torrent.Tags ?? string.Empty,
-            torrent.State ?? string.Empty);
+        Connection connection = await LoginAsync(cancellationToken);
+        ApiResponse response = await SendAsync(
+            HttpMethod.Get,
+            BuildUri(connection, "torrents/info"),
+            contentFactory: null,
+            connection,
+            cancellationToken);
+
+        // Сравнение без учёта регистра: название приходит из info-словаря .torrent,
+        // а клиент хранит его как есть. Полное совпадение исключает чужие раздачи.
+        return ReadTorrentList(response.Body)
+            .Where(torrent => string.Equals(torrent.Name, name, StringComparison.OrdinalIgnoreCase))
+            .Select(torrent => ToTorrentClientTorrent(torrent, fallbackInfoHash: string.Empty))
+            .ToArray();
     }
 
     public async Task AddTorrentAsync(
@@ -360,6 +358,32 @@ public sealed class QbittorrentClient : ITorrentClient
     {
         string trimmed = value.Trim();
         return trimmed.Length <= 200 ? trimmed : trimmed[..200] + "…";
+    }
+
+    private static TorrentClientTorrent ToTorrentClientTorrent(
+        TorrentInfoDto torrent,
+        string fallbackInfoHash) =>
+        new(
+            !string.IsNullOrEmpty(torrent.Hash) ? torrent.Hash : fallbackInfoHash,
+            torrent.Name ?? string.Empty,
+            torrent.SavePath ?? string.Empty,
+            torrent.Category ?? string.Empty,
+            torrent.Tags ?? string.Empty,
+            torrent.State ?? string.Empty);
+
+    private static List<TorrentInfoDto> ReadTorrentList(string body)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<List<TorrentInfoDto>>(body) ?? [];
+        }
+        catch (JsonException exception)
+        {
+            throw new AppException(
+                ErrorCodes.QbittorrentUnavailable,
+                "qBittorrent вернул неожиданный ответ вместо списка раздач.",
+                exception);
+        }
     }
 
     private sealed record Connection(Uri BaseUri, string? SessionCookie, int TimeoutSeconds);

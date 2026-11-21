@@ -10,8 +10,10 @@ namespace TorrentWatcher.Application.Services;
 /// <summary>
 /// Применяет обнаруженное обновление в qBittorrent: старую раздачу удаляет без удаления
 /// файлов, новую добавляет в ту же папку с той же категорией и тегами, запускает пересчёт
-/// хешей, чтобы уже скачанное переиспользовалось. Сбой клиента не делает проверку ошибочной:
-/// он сохраняется в <see cref="TrackedTorrent.ApplyError"/> и повторяется на следующем скане.
+/// хешей, чтобы уже скачанное переиспользовалось. Старая раздача ищется по infohash,
+/// а если он неизвестен — по названию из info-словаря. Сбой клиента не делает проверку
+/// ошибочной: он сохраняется в <see cref="TrackedTorrent.ApplyError"/> и повторяется
+/// на следующем скане.
 /// </summary>
 public sealed class TorrentApplyService : ITorrentUpdateApplier
 {
@@ -145,20 +147,7 @@ public sealed class TorrentApplyService : ITorrentUpdateApplier
 
     private async Task ReplaceAsync(TrackedTorrent torrent, CancellationToken cancellationToken)
     {
-        string? superseded = torrent.SupersededInfoHashV1;
-        TorrentClientTorrent? old = null;
-
-        if (!string.IsNullOrWhiteSpace(superseded)
-            && !string.Equals(superseded, torrent.InfoHashV1, StringComparison.OrdinalIgnoreCase))
-        {
-            old = await _torrentClient.FindAsync(superseded, cancellationToken);
-
-            if (old is not null)
-            {
-                // Файлы остаются на диске: новая версия заберёт их себе той же папкой.
-                await _torrentClient.DeleteTorrentAsync(superseded, cancellationToken);
-            }
-        }
+        TorrentClientTorrent? old = await RemoveOldVersionAsync(torrent, cancellationToken);
 
         TorrentClientTorrent? current = await _torrentClient.FindAsync(
             torrent.InfoHashV1,
@@ -183,6 +172,61 @@ public sealed class TorrentApplyService : ITorrentUpdateApplier
             await _torrentClient.ResumeAsync(torrent.InfoHashV1, cancellationToken);
         }
     }
+
+    /// <summary>
+    /// Убирает из клиента прежние версии раздачи и возвращает одну из них, чтобы взять
+    /// её папку, категорию и теги. Сначала поиск идёт по сохранённому infohash, затем
+    /// по названию из info-словаря: infohash старой версии может быть неизвестен, если
+    /// раздачу добавили в клиент вручную или рутрекер перезалил торрент под новым хешем.
+    /// </summary>
+    private async Task<TorrentClientTorrent?> RemoveOldVersionAsync(
+        TrackedTorrent torrent,
+        CancellationToken cancellationToken)
+    {
+        TorrentClientTorrent? old = null;
+        string? superseded = torrent.SupersededInfoHashV1;
+
+        if (!string.IsNullOrWhiteSpace(superseded)
+            && !SameHash(superseded, torrent.InfoHashV1))
+        {
+            TorrentClientTorrent? byHash = await _torrentClient.FindAsync(
+                superseded,
+                cancellationToken);
+
+            if (byHash is not null && !SameHash(byHash.InfoHash, torrent.InfoHashV1))
+            {
+                // Файлы остаются на диске: новая версия заберёт их себе той же папкой.
+                await _torrentClient.DeleteTorrentAsync(byHash.InfoHash, cancellationToken);
+                old = byHash;
+            }
+        }
+
+        if (old is not null || string.IsNullOrWhiteSpace(torrent.Title))
+        {
+            return old;
+        }
+
+        IReadOnlyList<TorrentClientTorrent> sameName = await _torrentClient.FindByNameAsync(
+            torrent.Title,
+            cancellationToken);
+
+        foreach (TorrentClientTorrent candidate in sameName)
+        {
+            if (string.IsNullOrEmpty(candidate.InfoHash)
+                || SameHash(candidate.InfoHash, torrent.InfoHashV1))
+            {
+                continue;
+            }
+
+            await _torrentClient.DeleteTorrentAsync(candidate.InfoHash, cancellationToken);
+            old ??= candidate;
+        }
+
+        return old;
+    }
+
+    private static bool SameHash(string left, string right) =>
+        string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
 
     private async Task<TorrentApplyResult> RecordFailureAsync(
         TrackedTorrent torrent,

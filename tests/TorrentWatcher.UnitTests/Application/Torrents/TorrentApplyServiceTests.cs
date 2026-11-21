@@ -78,6 +78,82 @@ public sealed class TorrentApplyServiceTests
     }
 
     [Fact]
+    public async Task ApplyAsync_OldHashUnknown_ReplacesTorrentWithSameName()
+    {
+        TrackedTorrent torrent = Torrent();
+        torrent.SupersededInfoHashV1 = null;
+        torrent.AppliedInfoHashV1 = null;
+
+        var client = new RecordingTorrentClient();
+        client.Torrents.Add(new TorrentClientTorrent(
+            OldHash,
+            torrent.Title,
+            "/downloads/Раздача",
+            "movies",
+            "tag1",
+            "stalledUP"));
+
+        var repository = new InMemoryTrackedTorrentRepository(torrent);
+        TorrentApplyService service = CreateService(repository, client);
+
+        TorrentApplyResult result = await service.ApplyAsync(torrent, force: true, CancellationToken.None);
+
+        Assert.True(result.Applied);
+        Assert.Equal(
+            [
+                $"findByName:{torrent.Title}",
+                $"delete:{OldHash}",
+                $"find:{NewHash}",
+                $"add:{NewHash}",
+                $"recheck:{NewHash}",
+                $"resume:{NewHash}",
+            ],
+            client.Calls);
+
+        Assert.NotNull(client.LastAdd);
+        Assert.Equal("/downloads/Раздача", client.LastAdd.SavePath);
+        Assert.Equal("movies", client.LastAdd.Category);
+        Assert.Equal("tag1", client.LastAdd.Tags);
+
+        TrackedTorrent updated = repository.Torrents[0];
+        Assert.Equal(NewHash, updated.AppliedInfoHashV1);
+        Assert.Null(updated.SupersededInfoHashV1);
+    }
+
+    [Fact]
+    public async Task ApplyAsync_SameNameWithCurrentHash_DoesNotDeleteOrAdd()
+    {
+        TrackedTorrent torrent = Torrent();
+        torrent.SupersededInfoHashV1 = null;
+
+        var client = new RecordingTorrentClient();
+        client.Torrents.Add(new TorrentClientTorrent(
+            NewHash,
+            torrent.Title,
+            "/downloads/Раздача",
+            "movies",
+            "tag1",
+            "uploading"));
+
+        var repository = new InMemoryTrackedTorrentRepository(torrent);
+        TorrentApplyService service = CreateService(repository, client);
+
+        TorrentApplyResult result = await service.ApplyAsync(torrent, force: true, CancellationToken.None);
+
+        Assert.True(result.Applied);
+        Assert.Equal(
+            [
+                $"findByName:{torrent.Title}",
+                $"find:{NewHash}",
+            ],
+            client.Calls);
+
+        Assert.Empty(client.Deleted);
+        Assert.Null(client.LastAdd);
+        Assert.Equal(NewHash, repository.Torrents[0].AppliedInfoHashV1);
+    }
+
+    [Fact]
     public async Task ApplyAsync_AlreadyApplied_SkipsClient()
     {
         TrackedTorrent torrent = Torrent();

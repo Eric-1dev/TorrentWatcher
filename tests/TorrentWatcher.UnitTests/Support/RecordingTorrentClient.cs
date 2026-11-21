@@ -16,6 +16,9 @@ public sealed class RecordingTorrentClient : ITorrentClient
 
     public Func<string, TorrentClientTorrent?>? FindHandler { get; set; }
 
+    /// <summary>Раздачи, которые «лежат» в клиенте (используется поиском по названию).</summary>
+    public List<TorrentClientTorrent> Torrents { get; } = [];
+
     public bool FailOnAdd { get; set; }
 
     public List<string> Calls { get; } = [];
@@ -43,7 +46,27 @@ public sealed class RecordingTorrentClient : ITorrentClient
     public Task<TorrentClientTorrent?> FindAsync(string infoHash, CancellationToken cancellationToken)
     {
         Calls.Add($"find:{infoHash}");
-        return Task.FromResult(FindHandler?.Invoke(infoHash));
+
+        if (FindHandler is not null)
+        {
+            return Task.FromResult(FindHandler.Invoke(infoHash));
+        }
+
+        return Task.FromResult(Torrents.FirstOrDefault(
+            torrent => string.Equals(torrent.InfoHash, infoHash, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    public Task<IReadOnlyList<TorrentClientTorrent>> FindByNameAsync(
+        string name,
+        CancellationToken cancellationToken)
+    {
+        Calls.Add($"findByName:{name}");
+
+        IReadOnlyList<TorrentClientTorrent> matches = Torrents
+            .Where(torrent => string.Equals(torrent.Name, name, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+
+        return Task.FromResult(matches);
     }
 
     public Task AddTorrentAsync(TorrentClientAddRequest request, CancellationToken cancellationToken)

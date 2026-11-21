@@ -98,6 +98,9 @@ if "%IMAGE_NAME%"=="" set "IMAGE_NAME=torrentwatcher"
 if "%APP_PORT%"=="" set "APP_PORT=8088"
 if "%INSTALL_DIR%"=="" set "INSTALL_DIR=/torrentwatcher"
 if "%REMOTE_DIR%"=="" set "REMOTE_DIR=/tmp"
+REM 0 — после деплоя на сервере остаётся только torrentwatcher:latest.
+REM 1 — плюс текущий и предыдущий теги (примерно +3,5 ГБ, зато есть откат).
+if "%KEEP_PREVIOUS_IMAGE%"=="" set "KEEP_PREVIOUS_IMAGE=0"
 if "%PLINK%"=="" set "PLINK=plink.exe"
 if "%PSCP%"=="" set "PSCP=pscp.exe"
 
@@ -119,6 +122,11 @@ echo   Сервер  : %SSH_TARGET%
 echo   Каталог : %INSTALL_DIR%
 echo   Порт    : %APP_PORT%
 echo   Sudo    : %SUDO_MODE%
+if "%KEEP_PREVIOUS_IMAGE%"=="1" (
+  echo   Образы  : latest + текущий + предыдущий ^(откат^)
+) else (
+  echo   Образы  : только latest ^(старые удаляются^)
+)
 echo ================================================
 echo.
 
@@ -191,7 +199,7 @@ if defined PW_FILE (
 echo [4/6] Загрузка образа и перезапуск контейнера на сервере...
 REM Пароль sudo, если он нужен, лежит отдельным файлом: stdin занят баннером
 REM SSH-сервера и не годится для передачи секрета.
-%PLINK% %SSH_AUTH% %SSH_TARGET% "bash %REMOTE_DIR%/remote-deploy.sh %APP_PORT% %BUILD_ID% %INSTALL_DIR% %SUDO_MODE% %REMOTE_DIR%/torrentwatcher-sudo.txt"
+%PLINK% %SSH_AUTH% %SSH_TARGET% "bash %REMOTE_DIR%/remote-deploy.sh %APP_PORT% %BUILD_ID% %INSTALL_DIR% %SUDO_MODE% %REMOTE_DIR%/torrentwatcher-sudo.txt %KEEP_PREVIOUS_IMAGE%"
 set "DEPLOY_RC=%ERRORLEVEL%"
 if defined PW_FILE del /q "%PW_FILE%" >nul 2>&1
 REM Код 2 — деплой удался, но remote-deploy.sh выдал предупреждения
@@ -203,8 +211,10 @@ echo [5/6] Удаление временного tar...
 if exist %IMAGE_NAME%.tar del /q %IMAGE_NAME%.tar
 
 echo [6/6] Очистка старых локальных образов %IMAGE_NAME%...
+REM На сервере остаётся только latest; локально чистим так же. Тег текущей
+REM сборки сохраняем, если включён откат (KEEP_PREVIOUS_IMAGE=1).
 for /f "delims=" %%t in ('docker images %IMAGE_NAME% --format "{{.Tag}}"') do (
-  if not "%%t"=="latest" if not "%%t"=="%BUILD_ID%" docker rmi %IMAGE_NAME%:%%t >nul 2>&1
+  if not "%%t"=="<none>" call :clean_local_image "%%t"
 )
 
 popd
@@ -213,14 +223,21 @@ if exist "%STAGE%" rd /s /q "%STAGE%"
 
 echo.
 echo ================================================
-echo   Готово! Образ %IMAGE_NAME%:%BUILD_ID% развёрнут.
+echo   Сборка %BUILD_ID% развёрнута.
 echo   UI/API: http://%SSH_HOST%:%APP_PORT%
 echo   Данные: %INSTALL_DIR%/data
 echo ================================================
 exit /b 0
 
+:clean_local_image
+set "TAG=%~1"
+if /i "%TAG%"=="latest" goto :eof
+if "%KEEP_PREVIOUS_IMAGE%"=="1" if /i "%TAG%"=="%BUILD_ID%" goto :eof
+docker rmi %IMAGE_NAME%:%TAG% >nul 2>&1
+goto :eof
+
 :save_settings
-powershell -NoProfile -Command "$l=@(('SSH_USER='+$env:SSH_USER),('SSH_HOST='+$env:SSH_HOST),('SSH_AUTH='+$env:SSH_AUTH),('APP_PORT='+$env:APP_PORT),('INSTALL_DIR='+$env:INSTALL_DIR),('REMOTE_DIR='+$env:REMOTE_DIR)); Set-Content -LiteralPath $env:SAVED_FILE -Value $l -Encoding ASCII"
+powershell -NoProfile -Command "$l=@(('SSH_USER='+$env:SSH_USER),('SSH_HOST='+$env:SSH_HOST),('SSH_AUTH='+$env:SSH_AUTH),('APP_PORT='+$env:APP_PORT),('INSTALL_DIR='+$env:INSTALL_DIR),('REMOTE_DIR='+$env:REMOTE_DIR),('KEEP_PREVIOUS_IMAGE='+$env:KEEP_PREVIOUS_IMAGE)); Set-Content -LiteralPath $env:SAVED_FILE -Value $l -Encoding ASCII"
 goto :eof
 
 :error

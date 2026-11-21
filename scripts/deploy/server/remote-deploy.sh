@@ -14,12 +14,17 @@
 #   $4 — режим sudo: nopass (NOPASSWD или docker без sudo) | file
 #        (пароль sudo лежит в файле $5)
 #   $5 — путь к файлу с паролем sudo (только для режима file)
+#   $6 — 1: оставить текущий и предыдущий теги (для отката), иначе
+#        на сервере остаётся только latest
 #
 # Модель работы:
 #   * docker-compose.yaml в ${INSTALL_DIR} создаётся ОДИН РАЗ и далее не
 #     перезаписывается — конфиг правится на сервере вручную;
 #   * при каждом деплое образ из tar добавляется в Docker как latest, после
 #     чего выполняется `docker compose up -d --force-recreate`;
+#   * после успешного деплоя на сервере остаётся один образ torrentwatcher:latest,
+#     остальные теги удаляются (каждый образ занимает ~3,5 ГБ). Откат на
+#     предыдущую версию требует KEEP_PREVIOUS_IMAGE=1 ещё на прошлом деплое;
 #   * каталог data принадлежит пользователю app (UID образа), иначе SQLite
 #     и профиль Chromium не смогут писать.
 # ============================================================
@@ -39,6 +44,9 @@ NEW_TAG="${2:-latest}"
 INSTALL_DIR="${3:-/torrentwatcher}"
 SUDO_MODE="${4:-nopass}"
 SUDO_FILE="${5:-}"
+# 1 — оставить текущий и предыдущий теги: откат возможен, но диск занят
+# примерно на 7 ГБ. По умолчанию на сервере живёт только torrentwatcher:latest.
+KEEP_PREVIOUS_IMAGE="${6:-0}"
 
 COMPOSE_FILE="${INSTALL_DIR}/docker-compose.yaml"
 STATE_DIR="${INSTALL_DIR}/state"
@@ -214,7 +222,9 @@ elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 
 	as_root firewall-cmd --reload >/dev/null 2>&1 || true
 fi
 
-# ---------- История версий (для rollback) ----------
+# ---------- История версий ----------
+# Тег текущей сборки и предыдущий храним в state: они нужны для сообщений и
+# для режима KEEP_PREVIOUS_IMAGE=1 (образы старых версий иначе удаляются).
 CURRENT_TAG=""
 if [ -f "${STATE_DIR}/current_tag" ]; then
 	CURRENT_TAG="$(cat "${STATE_DIR}/current_tag")"
@@ -231,6 +241,9 @@ printf 'APP_PORT=%s\n' "${APP_PORT}" > "${INSTALL_DIR}/.env"
 
 # Убираем контейнер от старого способа запуска (docker run или другой compose),
 # иначе будет конфликт имени: compose его не узнаёт.
+# ID текущего образа запоминаем: после пересоздания он может остаться без тегов
+# (например, если тег удалили вручную), и тогда `docker images` его не покажет.
+OLD_IMAGE_ID="$(as_root docker inspect -f '{{.Image}}' "${CONTAINER_NAME}" 2>/dev/null || true)"
 as_root docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
 echo "[deploy] ${COMPOSE_BIN[*]} up -d --force-recreate (тег ${NEW_TAG}, порт ${APP_PORT})..."
 as_root "${COMPOSE_BIN[@]}" -f "${COMPOSE_FILE}" up -d --force-recreate
@@ -266,6 +279,12 @@ for _ in $(seq 1 40); do
 			HEALTHY=1
 			break
 		fi
+		# В compose может не оказаться healthcheck — тогда ориентируемся на State.
+		if [ "${HEALTH}" = "none" ] && [ "${STATE}" = "running" ]; then
+			echo "[deploy] У контейнера нет healthcheck — проверка здоровья пропущена."
+			HEALTHY=1
+			break
+		fi
 		if [ "${HEALTH}" = "unhealthy" ] || [ "${STATE}" = "exited" ]; then
 			break
 		fi
@@ -293,22 +312,60 @@ fi
 # ---------- Очистка старых образов ----------
 PREV_TAG=""
 if [ -f "${STATE_DIR}/previous_tag" ]; then
-	PREV_TAG="$(cat "${STATE_DIR}/previous_tag")"
+	PREV_TAG="$(cat "${STATE_DIR}/previous_tag" 2>/dev/null || true)"
 fi
 
-KEEP_TAGS=" ${NEW_TAG} latest "
-if [ -n "${PREV_TAG}" ]; then
-	KEEP_TAGS="${KEEP_TAGS}${PREV_TAG} "
+KEEP_TAGS="latest"
+if [ "${KEEP_PREVIOUS_IMAGE}" = "1" ]; then
+	KEEP_TAGS="${KEEP_TAGS} ${NEW_TAG}"
+	if [ -n "${PREV_TAG}" ]; then
+		KEEP_TAGS="${KEEP_TAGS} ${PREV_TAG}"
+	fi
 fi
 
-echo "[deploy] Очистка старых образов (оставляю${KEEP_TAGS})..."
-for ref in $(as_root docker images --format '{{.Repository}}:{{.Tag}}' "${IMAGE_NAME}"); do
-	tag="${ref#"${IMAGE_NAME}:"}"
-	case " ${KEEP_TAGS} " in
-		*" ${tag} "*) continue ;;
-	esac
-	as_root docker rmi "${ref}" >/dev/null 2>&1 || true
-done
+# Если контейнер не стал healthy, предыдущий образ может понадобиться для
+# отката — тогда очистку пропускаем.
+if [ "${HEALTHY}" -eq 1 ]; then
+	echo "[deploy] Очистка старых образов (оставляю: ${KEEP_TAGS})..."
+	# Список читаем в переменную: молча пустой вывод (нет прав, сломан docker)
+	# раньше выглядел как успешная очистка.
+	IMAGE_REFS=""
+	if ! IMAGE_REFS="$(as_root docker images --format '{{.Repository}}:{{.Tag}}' "${IMAGE_NAME}" 2>/dev/null)"; then
+		warn "не удалось получить список образов ${IMAGE_NAME} — старые образы не удалены"
+		IMAGE_REFS=""
+	fi
+
+	for ref in ${IMAGE_REFS}; do
+		tag="${ref#"${IMAGE_NAME}:"}"
+		if [ "${tag}" = "${ref}" ]; then
+			continue
+		fi
+		case " ${KEEP_TAGS} " in
+			*" ${tag} "*) continue ;;
+		esac
+		if as_root docker image rm "${ref}" >/dev/null 2>&1; then
+			echo "[deploy] Удалён ${ref}"
+		else
+			warn "не удалось удалить ${ref} (образ занят контейнером или нет прав)"
+		fi
+	done
+
+	# Предыдущий образ мог остаться без тегов (тег удалили вручную или он стал
+	# висячим при переносе latest). Такой образ `docker images` не показывает,
+	# но место на диске он занимает — удаляем по ID.
+	if [ "${KEEP_PREVIOUS_IMAGE}" != "1" ] && [ -n "${OLD_IMAGE_ID}" ]; then
+		NEW_IMAGE_ID="$(as_root docker inspect -f '{{.Image}}' "${CONTAINER_NAME}" 2>/dev/null || true)"
+		if [ "${OLD_IMAGE_ID}" != "${NEW_IMAGE_ID}" ]; then
+			if as_root docker image rm "${OLD_IMAGE_ID}" >/dev/null 2>&1; then
+				echo "[deploy] Удалён предыдущий образ ${OLD_IMAGE_ID}"
+			else
+				warn "не удалось удалить предыдущий образ ${OLD_IMAGE_ID} (занят контейнером или нет прав)"
+			fi
+		fi
+	fi
+else
+	warn "старые образы не удалены: контейнер не healthy, оставляю для отката"
+fi
 
 if [ -f "${TAR_PATH}" ]; then
 	rm -f "${TAR_PATH}"
@@ -317,6 +374,8 @@ fi
 
 echo "[deploy] Контейнер:"
 as_root docker ps --filter "name=${CONTAINER_NAME}"
+echo "[deploy] Образы ${IMAGE_NAME}:"
+as_root docker images --format '  {{.Repository}}:{{.Tag}}  {{.ID}}  {{.Size}}' "${IMAGE_NAME}" || true
 echo "[deploy] UI/API: http://<сервер>:${APP_PORT}"
 
 if [ "${WARN}" -ne 0 ]; then

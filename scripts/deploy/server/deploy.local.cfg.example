@@ -10,6 +10,8 @@
 ; APP_PORT — опубликованный на хосте порт UI/API (qBittorrent обычно занимает 8080).
 ; INSTALL_DIR — каталог на сервере, где лежат docker-compose.yaml, state и data.
 ; PSCP_COMPRESS=0 (переменная окружения перед запуском) отключает сжатие образа при передаче.
+; KEEP_PREVIOUS_IMAGE=1 — оставить на сервере текущий и предыдущий теги (откат,
+; примерно +3,5 ГБ). По умолчанию после деплоя остаётся только torrentwatcher:latest.
 
 SSH_USER=root
 SSH_HOST=your-server.example.com
@@ -17,3 +19,4 @@ SSH_AUTH=-i "C:\Users\YOU\keys\server.ppk"
 APP_PORT=8088
 INSTALL_DIR=/torrentwatcher
 REMOTE_DIR=/tmp
+KEEP_PREVIOUS_IMAGE=0

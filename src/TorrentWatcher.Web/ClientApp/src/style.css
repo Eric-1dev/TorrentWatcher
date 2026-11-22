@@ -49,8 +49,10 @@ body {
   text-decoration: none;
 }
 
-.brand .pi {
-  font-size: 1.25rem;
+.brand-mark {
+  width: 1.4rem;
+  height: 1.4rem;
+  flex: none;
 }
 
 .app-nav {
